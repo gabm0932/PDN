@@ -729,6 +729,8 @@ impl ServiceSupervisor {
             event_tx,
             shutdown_tx: Some(shutdown_tx),
             state: Arc::new(RwLock::new(SupervisorState::Initializing)),
+            supervision_handle: Arc::new(tokio::sync::Mutex::new(None)),
+            supervision_shutdown_tx: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
