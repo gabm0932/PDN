@@ -584,6 +584,10 @@ pub struct ServiceSupervisor {
     event_tx: broadcast::Sender<SupervisorEvent>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     state: Arc<RwLock<SupervisorState>>,
+    /// Handle to the supervision loop task for graceful shutdown
+    supervision_handle: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Shutdown signal for supervision loop
+    supervision_shutdown_tx: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 /// Supervisor configuration
