@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 
 /// Parse container:path format
+#[allow(dead_code)]
 pub fn parse_container_path(path: &str) -> Result<(Option<String>, String)> {
     if let Some(idx) = path.find(':') {
         let container = &path[..idx];
@@ -16,6 +17,7 @@ pub fn parse_container_path(path: &str) -> Result<(Option<String>, String)> {
 }
 
 /// Calculate directory size
+#[allow(dead_code)]
 pub fn dir_size(dir: &Path) -> Result<u64> {
     let mut size = 0;
     for entry in fs::read_dir(dir)? {
@@ -47,6 +49,7 @@ pub fn format_size(bytes: u64) -> String {
 }
 
 /// Parse size string (e.g., "2G", "512M", "1024K")
+#[allow(dead_code)]
 pub fn parse_size(s: &str) -> Result<u64> {
     let s = s.trim().to_lowercase();
     let (num, unit) = if s.ends_with('k') {

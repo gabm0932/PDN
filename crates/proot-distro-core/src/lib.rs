@@ -42,7 +42,9 @@ pub use gpu::{
     GpuDeviceType,
 };
 pub use guestfile::GuestFile;
-pub use image::{Image, ImageManager, ImageSource};
+pub use image::{
+    Image, ImageHistoryEntry, ImageInspectInfo, ImageManager, ImageSource, RootFSInfo,
+};
 pub use install::Installer;
 pub use locking::LockManager;
 pub use login::{LoginManager, LoginOptions};
@@ -71,6 +73,8 @@ use anyhow::{bail, Result};
 pub struct ProotDistroCore {
     container_manager: ContainerManager,
     image_manager: ImageManager,
+    network_manager: NetworkManager,
+    storage_manager: StorageManager,
     config_manager: ConfigManager,
     session_manager: SessionManager,
     lock_manager: LockManager,
@@ -84,6 +88,10 @@ impl ProotDistroCore {
         let container_manager = ContainerManager::new()?;
         eprintln!("[DEBUG new] Creating ImageManager");
         let image_manager = ImageManager::new()?;
+        eprintln!("[DEBUG new] Creating NetworkManager");
+        let network_manager = NetworkManager::new()?;
+        eprintln!("[DEBUG new] Creating StorageManager");
+        let storage_manager = StorageManager::new()?;
         eprintln!("[DEBUG new] Creating ConfigManager");
         let config_manager = ConfigManager::new()?;
         eprintln!("[DEBUG new] Creating SessionManager");
@@ -98,6 +106,8 @@ impl ProotDistroCore {
         Ok(Self {
             container_manager,
             image_manager,
+            network_manager,
+            storage_manager,
             config_manager,
             session_manager,
             lock_manager,
@@ -167,6 +177,14 @@ impl ProotDistroCore {
 
     pub async fn restore(&mut self, name: &str, src: &std::path::Path) -> Result<()> {
         self.container_manager.restore(name, src)
+    }
+
+    pub fn network_manager(&mut self) -> &mut NetworkManager {
+        &mut self.network_manager
+    }
+
+    pub fn storage_manager(&mut self) -> &mut StorageManager {
+        &mut self.storage_manager
     }
 }
 

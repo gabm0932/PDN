@@ -4,9 +4,13 @@
 //! container services and the supervisor. Implements a subset of the D-Bus
 //! specification suitable for Termux/Android environments.
 
+pub mod services;
+pub mod zbus_client;
+
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use services::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};

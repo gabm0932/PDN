@@ -3,6 +3,9 @@
 //! A comprehensive CLI that works with proot-distro-core, pn-next, and pn-gateway
 //! to provide full container lifecycle management, service orchestration, and monitoring.
 
+#![allow(deprecated)]
+#![allow(future_incompatible)]
+
 use anyhow::{bail, Context, Result};
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
@@ -42,7 +45,8 @@ struct SerializableImage {
 }
 
 use commands::*;
-use proot_distro_core::{ContainerInfo, SessionInfo};
+use proot_distro_core::network::{NetworkConfig, NetworkInfo};
+use proot_distro_core::storage::{VolumeConfig, VolumeInfo};
 
 #[derive(Parser)]
 #[command(name = "podnext")]
@@ -1996,8 +2000,9 @@ async fn cmd_image_pull(image: String, platform: Option<String>, all_tags: bool)
 
 async fn cmd_image_push(image: String) -> Result<()> {
     eprintln!("Pushing image: {}", image);
-    // TODO: Implement image push to registry
-    Err(anyhow::anyhow!("Image push not yet implemented"))
+    let mut image_mgr = proot_distro_core::ImageManager::new()?;
+    image_mgr.push(&image, None, None).await?;
+    Ok(())
 }
 
 async fn cmd_image_rm(images: Vec<String>, force: bool) -> Result<()> {
@@ -2026,23 +2031,139 @@ async fn cmd_image_rm(images: Vec<String>, force: bool) -> Result<()> {
 
 async fn cmd_image_tag(source: String, target: String) -> Result<()> {
     eprintln!("Tagging {} -> {}", source, target);
-    // TODO: Implement image tagging
-    Err(anyhow::anyhow!("Image tag not yet implemented"))
+    let mut image_mgr = proot_distro_core::ImageManager::new()?;
+    image_mgr.tag(&source, &target)?;
+    eprintln!("Tagged {} as {}", source, target);
+    Ok(())
 }
 
 async fn cmd_image_history(image: String, no_trunc: bool, format: OutputFormat) -> Result<()> {
     eprintln!("Showing history for image: {}", image);
-    if no_trunc {
-        eprintln!("Showing full history (no truncation)");
+    let image_mgr = proot_distro_core::ImageManager::new()?;
+    let history = image_mgr.history(&image)?;
+
+    #[derive(Tabled, Serialize)]
+    struct HistoryRow {
+        #[tabled(rename = "IMAGE")]
+        image: String,
+        #[tabled(rename = "CREATED")]
+        created: String,
+        #[tabled(rename = "CREATED BY")]
+        created_by: String,
+        #[tabled(rename = "SIZE")]
+        size: String,
+        #[tabled(rename = "COMMENT")]
+        comment: String,
     }
-    // TODO: Implement image history
-    Err(anyhow::anyhow!("Image history not yet implemented"))
+
+    let rows: Vec<HistoryRow> = history
+        .iter()
+        .map(|h| HistoryRow {
+            image: if no_trunc {
+                h.id.clone()
+            } else {
+                format!("{}...", &h.id[..12.min(h.id.len())])
+            },
+            created: h.created.format("%Y-%m-%d %H:%M:%S").to_string(),
+            created_by: h.created_by.clone(),
+            size: format_size(h.size),
+            comment: if no_trunc {
+                h.comment.clone()
+            } else {
+                if h.comment.len() > 50 {
+                    format!("{}...", &h.comment[..50])
+                } else {
+                    h.comment.clone()
+                }
+            },
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&history)?,
+        OutputFormat::Yaml => output_yaml(&history)?,
+        OutputFormat::Text => {
+            for h in history {
+                println!(
+                    "{} {} {} {}",
+                    if no_trunc {
+                        h.id.clone()
+                    } else {
+                        format!("{}...", &h.id[..12.min(h.id.len())])
+                    },
+                    h.created.format("%Y-%m-%d %H:%M:%S"),
+                    h.created_by,
+                    format_size(h.size)
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_image_inspect(images: Vec<String>, format: OutputFormat) -> Result<()> {
     eprintln!("Inspecting images: {:?}", images);
-    // TODO: Implement image inspect
-    Err(anyhow::anyhow!("Image inspect not yet implemented"))
+    let image_mgr = proot_distro_core::ImageManager::new()?;
+
+    let mut results = Vec::new();
+    for image_ref in images {
+        match image_mgr.inspect(&image_ref) {
+            Ok(info) => results.push(info),
+            Err(e) => eprintln!("Failed to inspect {}: {}", image_ref, e),
+        }
+    }
+
+    match format {
+        OutputFormat::Table => {
+            // For table, show summary
+            #[derive(Tabled, Serialize)]
+            struct InspectRow {
+                #[tabled(rename = "IMAGE")]
+                image: String,
+                #[tabled(rename = "ID")]
+                id: String,
+                #[tabled(rename = "CREATED")]
+                created: String,
+                #[tabled(rename = "SIZE")]
+                size: String,
+                #[tabled(rename = "ARCH")]
+                arch: String,
+                #[tabled(rename = "OS")]
+                os: String,
+            }
+
+            let rows: Vec<InspectRow> = results
+                .iter()
+                .map(|i| InspectRow {
+                    image: i.repo_tags.first().cloned().unwrap_or_default(),
+                    id: format!("{}...", &i.id[..12.min(i.id.len())]),
+                    created: i.created.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    size: format_size(i.size),
+                    arch: i.architecture.clone(),
+                    os: i.os.clone(),
+                })
+                .collect();
+            output_table(&rows);
+        }
+        OutputFormat::Json => output_json(&results)?,
+        OutputFormat::Yaml => output_yaml(&results)?,
+        OutputFormat::Text => {
+            for i in results {
+                println!(
+                    "Image: {}",
+                    i.repo_tags.first().cloned().unwrap_or_default()
+                );
+                println!("  ID: {}", i.id);
+                println!("  Created: {}", i.created.format("%Y-%m-%d %H:%M:%S"));
+                println!("  Size: {}", format_size(i.size));
+                println!("  Architecture: {}", i.architecture);
+                println!("  OS: {}", i.os);
+                println!();
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_image_ls(format: OutputFormat, all: bool) -> Result<()> {
@@ -2222,29 +2343,134 @@ async fn cmd_network_create(
     subnet: Option<String>,
     gateway: Option<String>,
 ) -> Result<()> {
-    eprintln!("Creating network: {} (driver: {})", name, driver);
-    if let Some(s) = subnet {
-        eprintln!("Subnet: {}", s);
-    }
-    if let Some(g) = gateway {
-        eprintln!("Gateway: {}", g);
-    }
-    Err(anyhow::anyhow!("Network create not yet implemented"))
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+    let config = NetworkConfig {
+        name: name.clone(),
+        driver,
+        subnet,
+        gateway,
+        dns_servers: vec!["8.8.8.8".to_string(), "8.8.4.4".to_string()],
+        enable_ipv6: false,
+        mtu: None,
+    };
+    core.network_manager().create(&config)?;
+    println!("Network '{}' created successfully", name);
+    Ok(())
 }
 
 async fn cmd_network_ls(format: OutputFormat) -> Result<()> {
-    eprintln!("Listing networks");
-    Err(anyhow::anyhow!("Network ls not yet implemented"))
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+    let networks = core.network_manager().list()?;
+
+    #[derive(Tabled, Serialize)]
+    struct NetworkRow {
+        #[tabled(rename = "NAME")]
+        name: String,
+        #[tabled(rename = "DRIVER")]
+        driver: String,
+        #[tabled(rename = "SUBNET")]
+        subnet: String,
+        #[tabled(rename = "GATEWAY")]
+        gateway: String,
+    }
+
+    let rows: Vec<NetworkRow> = networks
+        .iter()
+        .map(|n| NetworkRow {
+            name: n.name.clone(),
+            driver: n.driver.clone(),
+            subnet: n.subnet.clone().unwrap_or_default(),
+            gateway: n.gateway.clone().unwrap_or_default(),
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&networks)?,
+        OutputFormat::Yaml => output_yaml(&networks)?,
+        OutputFormat::Text => {
+            for n in networks {
+                println!(
+                    "{} {} {} {}",
+                    n.name,
+                    n.driver,
+                    n.subnet.unwrap_or_default(),
+                    n.gateway.unwrap_or_default()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_network_inspect(networks: Vec<String>, format: OutputFormat) -> Result<()> {
-    eprintln!("Inspecting networks: {:?}", networks);
-    Err(anyhow::anyhow!("Network inspect not yet implemented"))
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+    let mut results = Vec::new();
+
+    for name in networks {
+        match core.network_manager().inspect(&name) {
+            Ok(info) => results.push(info),
+            Err(e) => eprintln!("Network '{}': {}", name, e),
+        }
+    }
+
+    #[derive(Tabled, Serialize)]
+    struct NetworkRow {
+        #[tabled(rename = "NAME")]
+        name: String,
+        #[tabled(rename = "DRIVER")]
+        driver: String,
+        #[tabled(rename = "SUBNET")]
+        subnet: String,
+        #[tabled(rename = "GATEWAY")]
+        gateway: String,
+        #[tabled(rename = "IPV6")]
+        ipv6: String,
+        #[tabled(rename = "MTU")]
+        mtu: String,
+    }
+
+    let rows: Vec<NetworkRow> = results
+        .iter()
+        .map(|n| NetworkRow {
+            name: n.name.clone(),
+            driver: n.driver.clone(),
+            subnet: n.subnet.clone().unwrap_or_default(),
+            gateway: n.gateway.clone().unwrap_or_default(),
+            ipv6: n.enable_ipv6.to_string(),
+            mtu: n.mtu.map_or("".to_string(), |v| v.to_string()),
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&results)?,
+        OutputFormat::Yaml => output_yaml(&results)?,
+        OutputFormat::Text => {
+            for n in results {
+                println!(
+                    "{} {} {} {}",
+                    n.name,
+                    n.driver,
+                    n.subnet.unwrap_or_default(),
+                    n.gateway.unwrap_or_default()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_network_rm(networks: Vec<String>) -> Result<()> {
-    eprintln!("Removing networks: {:?}", networks);
-    Err(anyhow::anyhow!("Network rm not yet implemented"))
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+
+    for name in networks {
+        match core.network_manager().remove(&name) {
+            Ok(_) => println!("Removed network: {}", name),
+            Err(e) => eprintln!("Failed to remove network {}: {}", name, e),
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_network_connect(network: String, container: String, ip: Option<String>) -> Result<()> {
@@ -2264,26 +2490,129 @@ async fn cmd_network_disconnect(network: String, container: String) -> Result<()
 }
 
 async fn cmd_volume_create(name: String, driver: String, opts: Vec<String>) -> Result<()> {
-    eprintln!("Creating volume: {} (driver: {})", name, driver);
-    if !opts.is_empty() {
-        eprintln!("Opts: {:?}", opts);
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+    let mut labels = std::collections::HashMap::new();
+    let mut options = std::collections::HashMap::new();
+
+    for opt in opts {
+        if let Some((k, v)) = opt.split_once('=') {
+            options.insert(k.to_string(), v.to_string());
+        }
     }
-    Err(anyhow::anyhow!("Volume create not yet implemented"))
+
+    let config = VolumeConfig {
+        name: name.clone(),
+        driver,
+        labels,
+        options,
+    };
+    core.storage_manager().create_volume(&config)?;
+    println!("Volume '{}' created successfully", name);
+    Ok(())
 }
 
 async fn cmd_volume_ls(format: OutputFormat) -> Result<()> {
-    eprintln!("Listing volumes");
-    Err(anyhow::anyhow!("Volume ls not yet implemented"))
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+    let volumes = core.storage_manager().list_volumes()?;
+
+    #[derive(Tabled, Serialize)]
+    struct VolumeRow {
+        #[tabled(rename = "NAME")]
+        name: String,
+        #[tabled(rename = "DRIVER")]
+        driver: String,
+        #[tabled(rename = "MOUNTPOINT")]
+        mountpoint: String,
+    }
+
+    let rows: Vec<VolumeRow> = volumes
+        .iter()
+        .map(|v| VolumeRow {
+            name: v.name.clone(),
+            driver: v.driver.clone(),
+            mountpoint: v.mountpoint.display().to_string(),
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&volumes)?,
+        OutputFormat::Yaml => output_yaml(&volumes)?,
+        OutputFormat::Text => {
+            for v in volumes {
+                println!("{} {} {}", v.name, v.driver, v.mountpoint.display());
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_volume_inspect(volumes: Vec<String>, format: OutputFormat) -> Result<()> {
-    eprintln!("Inspecting volumes: {:?}", volumes);
-    Err(anyhow::anyhow!("Volume inspect not yet implemented"))
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+    let mut results = Vec::new();
+
+    for name in volumes {
+        match core.storage_manager().inspect_volume(&name) {
+            Ok(info) => results.push(info),
+            Err(e) => eprintln!("Volume '{}': {}", name, e),
+        }
+    }
+
+    #[derive(Tabled, Serialize)]
+    struct VolumeRow {
+        #[tabled(rename = "NAME")]
+        name: String,
+        #[tabled(rename = "DRIVER")]
+        driver: String,
+        #[tabled(rename = "MOUNTPOINT")]
+        mountpoint: String,
+        #[tabled(rename = "SIZE")]
+        size: String,
+    }
+
+    let rows: Vec<VolumeRow> = results
+        .iter()
+        .map(|v| VolumeRow {
+            name: v.name.clone(),
+            driver: v.driver.clone(),
+            mountpoint: v.mountpoint.display().to_string(),
+            size: v.size.to_string(),
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&results)?,
+        OutputFormat::Yaml => output_yaml(&results)?,
+        OutputFormat::Text => {
+            for v in results {
+                println!("{} {} {}", v.name, v.driver, v.mountpoint.display());
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_volume_rm(volumes: Vec<String>, force: bool) -> Result<()> {
-    eprintln!("Removing volumes: {:?} (force: {})", volumes, force);
-    Err(anyhow::anyhow!("Volume rm not yet implemented"))
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+
+    for name in volumes {
+        if !force {
+            print!("Remove volume '{}'? [y/N]: ", name);
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            if !input.trim().eq_ignore_ascii_case("y") {
+                println!("Cancelled.");
+                continue;
+            }
+        }
+        match core.storage_manager().remove_volume(&name) {
+            Ok(_) => println!("Removed volume: {}", name),
+            Err(e) => eprintln!("Failed to remove volume {}: {}", name, e),
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_volume_prune(force: bool) -> Result<()> {

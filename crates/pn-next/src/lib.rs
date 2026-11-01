@@ -4,6 +4,9 @@
 //! PRoot, PRoot-distro, and proot-compat to provide a more sophisticated,
 //! user-friendly, and organized system for managing containers on Termux.
 
+#![allow(deprecated)]
+#![allow(future_incompatible)]
+
 pub mod api;
 pub mod backup_restore;
 pub mod cluster;
@@ -52,6 +55,13 @@ pub use daemon_runtime::{
     DaemonRestartPolicy, DaemonRuntime, DaemonRuntimeConfig, DaemonServiceState,
     DaemonServiceStatus, DaemonStatus, ManagedService,
 };
+pub use dbus::services::{
+    interfaces, introspection, object_paths, service_names, ContainerConfig,
+    ContainerInfo as DBusContainerInfo, MountConfig, NetworkConfig as DBusNetworkConfig,
+    NetworkInfo, ResourceLimits as DBusResourceLimits, ServiceStatus as DBusServiceStatus,
+    VolumeConfig, VolumeInfo,
+};
+pub use dbus::zbus_client::{create_container_connection, ContainerDBusClient, ZBusClient};
 pub use dbus::{
     ConnectionInfo, DBusBroker, DBusBrokerConfig, DBusEvent, DBusMessage, MessageHeader,
     MessageType, ServiceRegistration,
@@ -89,9 +99,10 @@ pub use structured_logging::{
     StructuredLoggingConfig,
 };
 pub use supervisor::{
-    HealthCheckConfig as SupervisorHealthCheckConfig, HealthStatus, RestartCondition,
-    RestartPolicy, ServiceConfig, ServiceState, ServiceStatus, ServiceSupervisor, ServiceType,
-    SupervisorBuilder, SupervisorConfig, SupervisorEvent, SupervisorState,
+    CircuitBreaker, HealthCheckConfig as SupervisorHealthCheckConfig, HealthStatus,
+    LogRotationConfig, ProcessConfig, ResourceLimits, RestartCondition, RestartPolicy,
+    ServiceConfig, ServiceMeta, ServiceState, ServiceStatus, ServiceSupervisor, ServiceType,
+    StdioConfig, SupervisorBuilder, SupervisorConfig, SupervisorEvent, SupervisorState,
 };
 pub use termux_boot::{TermuxBootConfig, TermuxBootManager};
 pub use wake_lock::{WakeLockConfig, WakeLockManager, WakeLockState, WakeLockType};

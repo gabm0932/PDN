@@ -58,6 +58,8 @@ flamegraph = { version = "0.6", optional = true }
 toml = "0.8"
 petgraph = "0.6"
 shellexpand = "3.0"
+zbus = { version = "6.2", features = ["tokio"] }
+zvariant = "5.15"
 once_cell = "1.19"
 regex = "1.10"
 flate2 = "1.0"

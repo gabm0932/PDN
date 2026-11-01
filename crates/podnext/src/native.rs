@@ -21,6 +21,7 @@ use urlencoding::encode;
 
 #[derive(serde::Deserialize, Debug)]
 pub struct DockerHubSearchResponse {
+    #[allow(dead_code)]
     pub count: usize,
     pub results: Vec<DockerHubImage>,
 }
@@ -78,6 +79,7 @@ pub struct ManifestList {
 pub struct ManifestDescriptor {
     pub digest: String,
     #[serde(rename = "mediaType")]
+    #[allow(dead_code)]
     pub media_type: String,
     pub platform: Option<Platform>,
 }
@@ -88,6 +90,7 @@ pub struct Platform {
     pub os: String,
 }
 
+#[allow(dead_code)]
 struct ImageLayer {
     digest: String,
     size: u64,

@@ -53,7 +53,9 @@ impl Default for SecurityConfig {
 
 /// Security manager
 pub struct SecurityManager {
+    #[allow(dead_code)]
     config: SecurityConfig,
+    #[allow(dead_code)]
     policies: Arc<tokio::sync::RwLock<HashMap<String, Policy>>>,
     capabilities: Arc<tokio::sync::RwLock<HashMap<String, Vec<String>>>>,
 }

@@ -28,13 +28,38 @@ pub struct VolumeInfo {
 /// Storage manager
 pub struct StorageManager {
     volumes: HashMap<String, VolumeConfig>,
+    config_path: PathBuf,
 }
 
 impl StorageManager {
     pub fn new() -> Result<Self, Error> {
-        Ok(Self {
+        let config_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join("podnext");
+        std::fs::create_dir_all(&config_dir)?;
+        let config_path = config_dir.join("volumes.toml");
+
+        let mut manager = Self {
             volumes: HashMap::new(),
-        })
+            config_path,
+        };
+        manager.load()?;
+        Ok(manager)
+    }
+
+    fn load(&mut self) -> Result<()> {
+        if self.config_path.exists() {
+            let content = std::fs::read_to_string(&self.config_path)?;
+            let volumes: HashMap<String, VolumeConfig> = toml::from_str(&content)?;
+            self.volumes = volumes;
+        }
+        Ok(())
+    }
+
+    fn save(&self) -> Result<()> {
+        let content = toml::to_string_pretty(&self.volumes)?;
+        std::fs::write(&self.config_path, content)?;
+        Ok(())
     }
 
     pub fn create_volume(&mut self, config: &VolumeConfig) -> Result<()> {
@@ -45,11 +70,13 @@ impl StorageManager {
             )));
         }
         self.volumes.insert(config.name.clone(), config.clone());
+        self.save()?;
         Ok(())
     }
 
-    pub fn remove_volume(&self, name: &str) -> Result<()> {
-        if self.volumes.contains_key(name) {
+    pub fn remove_volume(&mut self, name: &str) -> Result<()> {
+        if self.volumes.remove(name).is_some() {
+            self.save()?;
             Ok(())
         } else {
             Err(Error::msg(format!("Volume '{}' not found", name)))

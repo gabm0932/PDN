@@ -9,15 +9,12 @@ use pn_next::{
     SupervisorConfig, SupervisorEvent,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{broadcast, RwLock};
-use tokio::time::interval;
-use tracing::{debug, error, info, warn};
+use tokio::sync::broadcast;
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 /// Daemon command protocol
@@ -117,7 +114,7 @@ async fn main() -> Result<()> {
     }
 
     // Build supervisor config
-    let config = SupervisorConfig {
+    let _config = SupervisorConfig {
         services_dir: args.services_dir.clone(),
         runtime_dir: args.runtime_dir.clone(),
         log_dir: args.log_dir.clone(),
@@ -194,7 +191,7 @@ async fn main() -> Result<()> {
 }
 
 /// Handle a single client connection
-async fn handle_connection(mut stream: UnixStream, state: Arc<DaemonState>) -> Result<()> {
+async fn handle_connection(stream: UnixStream, state: Arc<DaemonState>) -> Result<()> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
 
@@ -323,14 +320,14 @@ async fn handle_restart(supervisor: &ServiceSupervisor, name: &str) -> DaemonRes
     }
 }
 
-async fn handle_load(supervisor: &ServiceSupervisor, name: &str) -> DaemonResponse {
+async fn handle_load(_supervisor: &ServiceSupervisor, name: &str) -> DaemonResponse {
     // Load service from TOML - would need to implement in supervisor
     DaemonResponse::Ok {
         data: serde_json::json!({"message": format!("Service '{}' load requested", name)}),
     }
 }
 
-async fn handle_subscribe(mut events: broadcast::Receiver<SupervisorEvent>) -> DaemonResponse {
+async fn handle_subscribe(_events: broadcast::Receiver<SupervisorEvent>) -> DaemonResponse {
     // This would need to be handled differently - return a stream
     // For now, just return success
     DaemonResponse::Ok {

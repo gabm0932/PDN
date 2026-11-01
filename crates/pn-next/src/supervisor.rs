@@ -242,6 +242,89 @@ fn default_max_restart_delay() -> u64 {
 fn default_backoff_multiplier() -> f64 {
     2.0
 }
+/// Circuit breaker for restart rate limiting
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreaker {
+    /// Number of failures in the current window
+    pub failure_count: u32,
+    /// Timestamp of the first failure in the current window
+    pub window_start: Option<DateTime<Utc>>,
+    /// Whether the circuit is open (blocking restarts)
+    pub is_open: bool,
+    /// Timestamp when the circuit was opened
+    pub opened_at: Option<DateTime<Utc>>,
+    /// Number of successful operations since last failure
+    pub success_count: u32,
+}
+
+impl Default for CircuitBreaker {
+    fn default() -> Self {
+        Self {
+            failure_count: 0,
+            window_start: None,
+            is_open: false,
+            opened_at: None,
+            success_count: 0,
+        }
+    }
+}
+
+impl CircuitBreaker {
+    /// Create a new circuit breaker
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a failure and check if circuit should open
+    pub fn record_failure(&mut self, max_failures: u32, window_secs: u64) -> bool {
+        let now = Utc::now();
+
+        // Reset window if expired
+        if let Some(window_start) = self.window_start {
+            if now.signed_duration_since(window_start).num_seconds() > window_secs as i64 {
+                self.failure_count = 0;
+                self.window_start = None;
+            }
+        }
+
+        if self.window_start.is_none() {
+            self.window_start = Some(now);
+        }
+
+        self.failure_count += 1;
+        self.success_count = 0;
+
+        if self.failure_count >= max_failures && !self.is_open {
+            self.is_open = true;
+            self.opened_at = Some(now);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Record a success
+    pub fn record_success(&mut self) {
+        self.success_count += 1;
+        // Half-open: allow trial after some successes
+        if self.is_open && self.success_count >= 2 {
+            self.is_open = false;
+            self.failure_count = 0;
+            self.window_start = None;
+            self.opened_at = None;
+        }
+    }
+
+    /// Check if circuit allows operation
+    pub fn allows_operation(&self) -> bool {
+        !self.is_open
+    }
+
+    /// Reset the circuit breaker
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
 
 /// Restart condition
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -253,6 +336,8 @@ pub enum RestartCondition {
     OnFailure,
     /// Restart on any exit
     Always,
+    /// Restart unless explicitly stopped
+    UnlessStopped,
     /// Restart on abnormal exit (signal)
     OnAbnormal,
 }
@@ -587,6 +672,9 @@ struct ManagedService {
     health_task: Option<tokio::task::JoinHandle<()>>,
     restart_semaphore: Arc<Semaphore>,
     cgroup_path: Option<PathBuf>,
+    circuit_breaker: CircuitBreaker,
+    /// Whether service was explicitly stopped by user
+    user_stopped: bool,
 }
 
 /// Supervisor events
@@ -705,6 +793,8 @@ impl ServiceSupervisor {
                             health_task: None,
                             restart_semaphore: Arc::new(Semaphore::new(1)),
                             cgroup_path: None,
+                            circuit_breaker: CircuitBreaker::new(),
+                            user_stopped: false,
                         };
                         services.insert(name, managed);
                         info!("Loaded service: {}", name_for_log);
@@ -843,7 +933,7 @@ impl ServiceSupervisor {
                                             });
 
                                             // Handle restart policy
-                                            if Self::should_restart_static(&managed.status, &config.restart) {
+                                            if Self::should_restart_static(&managed.status, &config.restart, managed.user_stopped, &managed.circuit_breaker) {
                                                 // Schedule restart would go here
                                             }
                                         }
@@ -865,12 +955,23 @@ impl ServiceSupervisor {
     }
 
     /// Determine if service should be restarted (static version for use in supervision loop)
-    fn should_restart_static(status: &ServiceStatus, policy: &RestartPolicy) -> bool {
+    fn should_restart_static(
+        status: &ServiceStatus,
+        policy: &RestartPolicy,
+        user_stopped: bool,
+        circuit_breaker: &CircuitBreaker,
+    ) -> bool {
+        // Circuit breaker blocks restarts
+        if !circuit_breaker.allows_operation() {
+            return false;
+        }
+
         match policy.condition {
             RestartCondition::Never => false,
             RestartCondition::Always => true,
             RestartCondition::OnFailure => status.exit_code.map_or(false, |c| c != 0),
             RestartCondition::OnAbnormal => status.exit_code.map_or(false, |c| c < 0 || c > 128),
+            RestartCondition::UnlessStopped => !user_stopped,
         }
     }
 
@@ -931,7 +1032,12 @@ impl ServiceSupervisor {
                         });
 
                         // Handle restart policy
-                        if ServiceSupervisor::should_restart(&managed.status, &config.restart) {
+                        if ServiceSupervisor::should_restart(
+                            &managed.status,
+                            &config.restart,
+                            managed.user_stopped,
+                            &managed.circuit_breaker,
+                        ) {
                             self.schedule_restart(name.clone(), config.clone(), event_tx)
                                 .await?;
                         }
@@ -955,7 +1061,17 @@ impl ServiceSupervisor {
     }
 
     /// Determine if service should be restarted
-    pub fn should_restart(status: &ServiceStatus, policy: &RestartPolicy) -> bool {
+    pub fn should_restart(
+        status: &ServiceStatus,
+        policy: &RestartPolicy,
+        user_stopped: bool,
+        circuit_breaker: &CircuitBreaker,
+    ) -> bool {
+        // Circuit breaker blocks restarts
+        if !circuit_breaker.allows_operation() {
+            return false;
+        }
+
         match policy.condition {
             RestartCondition::Never => false,
             RestartCondition::Always => true,
@@ -964,6 +1080,7 @@ impl ServiceSupervisor {
                 // Check if exited due to signal (negative exit code on Unix)
                 status.exit_code.map_or(false, |c| c < 0 || c > 128)
             }
+            RestartCondition::UnlessStopped => !user_stopped,
         }
     }
 
@@ -974,6 +1091,42 @@ impl ServiceSupervisor {
         config: ServiceConfig,
         event_tx: &broadcast::Sender<SupervisorEvent>,
     ) -> Result<()> {
+        // Check circuit breaker first
+        let circuit_open = {
+            let services = self.services.read().await;
+            if let Some(managed) = services.get(&name) {
+                let mut cb = managed.circuit_breaker.clone();
+                // Record failure in circuit breaker
+                let window_secs = config.restart.restart_window_secs;
+                let max_failures = config.restart.max_restarts;
+                let opened = cb.record_failure(max_failures, window_secs);
+                if opened {
+                    error!("Circuit breaker opened for service {}", name);
+                }
+                // Note: we can't update the circuit breaker here due to read lock
+                // The check will be done in should_restart when actually restarting
+                !cb.allows_operation()
+            } else {
+                false
+            }
+        };
+
+        if circuit_open {
+            error!(
+                "Circuit breaker open for service {}, skipping restart",
+                name
+            );
+            let mut services = self.services.write().await;
+            if let Some(managed) = services.get_mut(&name) {
+                managed.status.state = ServiceState::Failed;
+            }
+            let _ = event_tx.send(SupervisorEvent::ServiceFailed {
+                name: name.clone(),
+                error: "Circuit breaker open - too many failures".to_string(),
+            });
+            return Ok(());
+        }
+
         let now = Utc::now();
         let window_start =
             now - chrono::Duration::seconds(config.restart.restart_window_secs as i64);
@@ -1191,6 +1344,9 @@ impl ServiceSupervisor {
                 } else {
                     Some(HealthStatus::Unknown)
                 };
+                // Reset circuit breaker and user_stopped on successful start
+                managed.circuit_breaker.reset();
+                managed.user_stopped = false;
             }
         }
 
@@ -1296,7 +1452,12 @@ impl ServiceSupervisor {
                     // If unhealthy and restart policy allows, trigger restart
                     if new_health == HealthStatus::Unhealthy {
                         if let Some(managed) = services_guard.get_mut(&name_for_task) {
-                            if ServiceSupervisor::should_restart(&managed.status, &config.restart) {
+                            if ServiceSupervisor::should_restart(
+                                &managed.status,
+                                &config.restart,
+                                managed.user_stopped,
+                                &managed.circuit_breaker,
+                            ) {
                                 managed.status.state = ServiceState::Restarting;
                             }
                         }
@@ -1422,6 +1583,8 @@ impl ServiceSupervisor {
                 managed.status.exit_code = exit_code;
                 managed.status.state_changed_at = Utc::now();
                 managed.status.pid = None;
+                // Mark as user-stopped to prevent UnlessStopped restart
+                managed.user_stopped = true;
 
                 // Cleanup cgroup
                 if let Some(cgroup) = &managed.cgroup_path {
@@ -1593,6 +1756,120 @@ impl ServiceSupervisor {
 
         self.emit(SupervisorEvent::ReloadRequested).await;
 
+        Ok(())
+    }
+
+    /// Save service configuration to TOML file
+    pub async fn save_service(&self, name: &str) -> Result<()> {
+        let config = {
+            let services = self.services.read().await;
+            services
+                .get(name)
+                .map(|s| s.config.clone())
+                .ok_or_else(|| anyhow::anyhow!("Service not found: {}", name))?
+        };
+
+        let path = self.config.services_dir.join(format!("{}.toml", name));
+        let content =
+            toml::to_string_pretty(&config).context("Failed to serialize service config")?;
+
+        fs::write(&path, content)
+            .with_context(|| format!("Failed to write service config to {:?}", path))?;
+
+        info!("Saved service config: {}", name);
+        Ok(())
+    }
+
+    /// Delete service configuration file
+    pub async fn delete_service_config(&self, name: &str) -> Result<()> {
+        let path = self.config.services_dir.join(format!("{}.toml", name));
+        if path.exists() {
+            fs::remove_file(&path)
+                .with_context(|| format!("Failed to delete service config: {:?}", path))?;
+            info!("Deleted service config: {}", name);
+        }
+        Ok(())
+    }
+
+    /// Create a new service from configuration
+    pub async fn create_service(&self, config: ServiceConfig) -> Result<()> {
+        let name = config.meta.name.clone();
+
+        // Validate
+        if config.meta.name.is_empty() {
+            bail!("Service name is required");
+        }
+        if config.process.command.is_empty() {
+            bail!("Service command is required");
+        }
+
+        // Save to file
+        let path = self.config.services_dir.join(format!("{}.toml", name));
+        let content =
+            toml::to_string_pretty(&config).context("Failed to serialize service config")?;
+        fs::write(&path, content)
+            .with_context(|| format!("Failed to write service config to {:?}", path))?;
+
+        // Load into memory
+        let managed = ManagedService {
+            config,
+            status: ServiceStatus {
+                name: name.clone(),
+                state: ServiceState::Stopped,
+                pid: None,
+                exit_code: None,
+                started_at: None,
+                state_changed_at: Utc::now(),
+                restart_count: 0,
+                total_restarts: 0,
+                last_restart_at: None,
+                health: Some(HealthStatus::Unknown),
+                resources: None,
+            },
+            process: None,
+            health_task: None,
+            restart_semaphore: Arc::new(Semaphore::new(1)),
+            cgroup_path: None,
+            circuit_breaker: CircuitBreaker::new(),
+            user_stopped: false,
+        };
+
+        let mut services = self.services.write().await;
+        services.insert(name.clone(), managed);
+
+        // Rebuild dependency graph
+        self.build_dependency_graph().await?;
+        self.validate_dependencies().await?;
+
+        info!("Created service: {}", name);
+        Ok(())
+    }
+
+    /// Get service configuration
+    pub async fn get_service_config(&self, name: &str) -> Result<ServiceConfig> {
+        let services = self.services.read().await;
+        services
+            .get(name)
+            .map(|s| s.config.clone())
+            .ok_or_else(|| anyhow::anyhow!("Service not found: {}", name))
+    }
+
+    /// Update service configuration
+    pub async fn update_service(&self, name: &str, config: ServiceConfig) -> Result<()> {
+        // Save to file
+        self.save_service(name).await?;
+
+        // Update in memory
+        let mut services = self.services.write().await;
+        if let Some(managed) = services.get_mut(name) {
+            managed.config = config;
+        }
+
+        // Rebuild dependency graph
+        self.build_dependency_graph().await?;
+        self.validate_dependencies().await?;
+
+        info!("Updated service: {}", name);
         Ok(())
     }
 }
