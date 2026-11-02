@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -97,8 +97,8 @@ impl VfsManager {
         }
     }
 
-    pub fn check_access(&self, tracee: &crate::tracee::Tracee, path: &Path, mode: u32) -> bool {
-        let host_path = self.resolve_path(tracee, path);
+    pub fn check_access(&self, tracee: &crate::tracee::Tracee, path: &Path, _mode: u32) -> bool {
+        let _host_path = self.resolve_path(tracee, path);
         // Check permissions
         // In a real implementation, this would check actual permissions
         true

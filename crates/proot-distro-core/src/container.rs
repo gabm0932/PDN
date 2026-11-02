@@ -7,8 +7,7 @@ use crate::locking::LockManager;
 use crate::paths::ContainerPaths;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use nix::unistd::Pid;
-use proot_core::{BindMount as ProotBindMount, ProotConfig, ProotEngine};
+use proot_core::{ProotConfig, ProotEngine};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -300,12 +299,12 @@ impl ContainerManager {
         Ok(exit_code)
     }
 
-    pub fn backup(&self, container: &Container, dest: &Path) -> Result<()> {
+    pub fn backup(&self, _container: &Container, _dest: &Path) -> Result<()> {
         // Implementation for backing up container
         Ok(())
     }
 
-    pub fn restore(&mut self, name: &str, src: &Path) -> Result<()> {
+    pub fn restore(&mut self, _name: &str, _src: &Path) -> Result<()> {
         // Implementation for restoring container
         Ok(())
     }

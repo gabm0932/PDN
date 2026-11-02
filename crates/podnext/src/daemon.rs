@@ -4,10 +4,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use pn_next::{
-    HealthStatus, ServiceState, ServiceStatus, ServiceSupervisor, SupervisorBuilder,
-    SupervisorConfig, SupervisorEvent,
-};
+use pn_next::{ServiceSupervisor, SupervisorBuilder, SupervisorConfig, SupervisorEvent};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;

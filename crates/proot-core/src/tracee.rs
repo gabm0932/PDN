@@ -7,9 +7,6 @@ use crate::tracee_state::TraceeStateManager;
 use crate::vfs::VfsManager;
 use anyhow::Result;
 use nix::unistd::Pid;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 /// Unique tracee identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,10 +67,10 @@ impl Tracee {
 
     pub fn handle_syscall_entry(
         &mut self,
-        handler: &mut crate::syscall::SyscallHandler,
+        _handler: &mut crate::syscall::SyscallHandler,
         translator: &mut crate::path::PathTranslator,
-        tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
-        vfs_mgr: &mut crate::vfs::VfsManager,
+        _tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
+        _vfs_mgr: &mut crate::vfs::VfsManager,
     ) -> Result<()> {
         let syscall = self.read_syscall()?;
         self.syscall_info = Some(SyscallInfo {
@@ -92,10 +89,10 @@ impl Tracee {
 
     pub fn handle_syscall_exit(
         &mut self,
-        handler: &mut crate::syscall::SyscallHandler,
-        translator: &mut crate::path::PathTranslator,
-        tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
-        vfs_mgr: &mut crate::vfs::VfsManager,
+        _handler: &mut crate::syscall::SyscallHandler,
+        _translator: &mut crate::path::PathTranslator,
+        _tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
+        _vfs_mgr: &mut crate::vfs::VfsManager,
     ) -> Result<()> {
         let retval = self.read_retval()?;
         if let Some(syscall_info) = &mut self.syscall_info {

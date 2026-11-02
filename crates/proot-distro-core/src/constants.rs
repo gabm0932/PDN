@@ -1,7 +1,5 @@
 //! Constants for PRoot Distro
 
-use std::path::PathBuf;
-
 /// Default constants
 pub mod constants {
     pub const DEFAULT_ROOT_DIR: &str = ".pn-next";

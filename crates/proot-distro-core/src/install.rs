@@ -1,12 +1,8 @@
 //! Installer for PRoot Distro
 
-use crate::config::{DistroConfig, InstallOptions};
-use crate::container::ContainerConfig;
-use crate::image::{ImageManager, ImageSource};
+use crate::config::InstallOptions;
+use crate::image::ImageManager;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Path, PathBuf};
 
 /// Installer for PRoot Distro
 pub struct Installer {

@@ -6,9 +6,9 @@
 #![allow(deprecated)]
 #![allow(future_incompatible)]
 
-use anyhow::{bail, Context, Result};
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use serde::{Deserialize, Serialize};
+use anyhow::{bail, Result};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use serde::Serialize;
 use serde_yaml;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -24,7 +24,7 @@ use native::{
     list_sessions_native_full, login_container_native, remove_container_native,
     run_container_native, search_docker_hub,
 };
-use utils::{format_size, parse_container_path, parse_size};
+use utils::format_size;
 
 #[derive(Serialize, Clone)]
 struct SerializableInfo {
@@ -45,8 +45,8 @@ struct SerializableImage {
 }
 
 use commands::*;
-use proot_distro_core::network::{NetworkConfig, NetworkInfo};
-use proot_distro_core::storage::{VolumeConfig, VolumeInfo};
+use proot_distro_core::network::NetworkConfig;
+use proot_distro_core::storage::VolumeConfig;
 
 #[derive(Parser)]
 #[command(name = "podnext")]
@@ -1692,17 +1692,17 @@ async fn cmd_login(container: String, user: Option<String>, command: Vec<String>
 async fn cmd_run(
     container: String,
     command: Vec<String>,
-    rm: bool,
+    _rm: bool,
     detach: bool,
-    name: Option<String>,
-    network: Option<String>,
-    volume: Vec<String>,
-    publish: Vec<String>,
-    entrypoint: Option<String>,
-    tty: bool,
-    interactive: bool,
-    user: Option<String>,
-    workdir: Option<String>,
+    _name: Option<String>,
+    _network: Option<String>,
+    _volume: Vec<String>,
+    _publish: Vec<String>,
+    _entrypoint: Option<String>,
+    _tty: bool,
+    _interactive: bool,
+    _user: Option<String>,
+    _workdir: Option<String>,
 ) -> Result<()> {
     // TODO: Implement full Podman-compatible run options
     // For now, just pass the command to the container
@@ -2166,7 +2166,7 @@ async fn cmd_image_inspect(images: Vec<String>, format: OutputFormat) -> Result<
     Ok(())
 }
 
-async fn cmd_image_ls(format: OutputFormat, all: bool) -> Result<()> {
+async fn cmd_image_ls(format: OutputFormat, _all: bool) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
     let containers = container_mgr.list().await?;
 
@@ -2491,7 +2491,7 @@ async fn cmd_network_disconnect(network: String, container: String) -> Result<()
 
 async fn cmd_volume_create(name: String, driver: String, opts: Vec<String>) -> Result<()> {
     let mut core = proot_distro_core::ProotDistroCore::new()?;
-    let mut labels = std::collections::HashMap::new();
+    let labels = std::collections::HashMap::new();
     let mut options = std::collections::HashMap::new();
 
     for opt in opts {

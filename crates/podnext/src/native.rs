@@ -7,10 +7,9 @@ use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
 use hex;
 use indicatif::{ProgressBar, ProgressStyle};
-use oci_spec::image::{ImageConfiguration, ImageManifest};
+use oci_spec::image::ImageManifest;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -295,7 +294,7 @@ async fn download_and_extract_layers(
     token: &str,
     rootfs: &Path,
 ) -> Result<()> {
-    let client = Client::new();
+    let _client = Client::new();
     let layers = manifest.layers();
     let pb = ProgressBar::new(layers.len() as u64);
     pb.set_style(ProgressStyle::default_bar()

@@ -47,8 +47,8 @@ impl PathTranslator {
 
     pub fn translate_syscall_args(
         &self,
-        args: &mut [u64],
-        path_info: &crate::tracee::PathInfo,
+        _args: &mut [u64],
+        _path_info: &crate::tracee::PathInfo,
     ) -> Result<()> {
         // Translate path arguments in syscalls
         Ok(())
@@ -56,8 +56,8 @@ impl PathTranslator {
 
     pub fn translate_syscall_retval(
         &self,
-        info: &mut crate::tracee::SyscallInfo,
-        path_info: &crate::tracee::PathInfo,
+        _info: &mut crate::tracee::SyscallInfo,
+        _path_info: &crate::tracee::PathInfo,
     ) -> Result<()> {
         // Translate return values that are paths
         Ok(())

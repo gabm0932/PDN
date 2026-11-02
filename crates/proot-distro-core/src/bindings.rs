@@ -1,8 +1,6 @@
 //! Bindings management for PRoot Distro
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 /// Bindings manager
 pub struct BindingManager {

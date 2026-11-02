@@ -1,16 +1,12 @@
 //! Image management for PRoot Distro
 
 use anyhow::{bail, Result};
-use flate2::read::GzDecoder;
-use oci_spec::image::{ImageConfiguration, ImageManifest};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use tar::Archive;
-use urlencoding::encode;
+use std::path::PathBuf;
 
 /// Image source for downloading
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,7 +93,7 @@ impl ImageManager {
         })
     }
 
-    fn verify_image(&self, image: &Image) -> Result<()> {
+    fn verify_image(&self, _image: &Image) -> Result<()> {
         // Verify image digest
         Ok(())
     }
@@ -144,7 +140,7 @@ impl ImageManager {
         // Get image manifest
         let manifest = self.build_manifest(&image)?;
         let manifest_bytes = serde_json::to_vec(&manifest)?;
-        let manifest_digest = Self::compute_digest(&manifest_bytes);
+        let _manifest_digest = Self::compute_digest(&manifest_bytes);
 
         // Push manifest
         let manifest_url = format!("{}/v2/{}/manifests/{}", registry_url, repo_name, tag);

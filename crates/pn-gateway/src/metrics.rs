@@ -6,10 +6,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tokio::time::interval;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Metrics collector for PN Gateway
 pub struct MetricsCollector {
@@ -208,7 +206,7 @@ impl MetricsCollector {
         metrics.get_metrics().await
     }
 
-    async fn export(exporter: &MetricsExporter, metrics: &serde_json::Value) -> Result<()> {
+    async fn export(exporter: &MetricsExporter, _metrics: &serde_json::Value) -> Result<()> {
         match exporter {
             MetricsExporter::Prometheus => {
                 // Export to Prometheus format

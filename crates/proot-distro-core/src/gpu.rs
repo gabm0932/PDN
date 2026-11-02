@@ -3,7 +3,7 @@
 //! Provides device detection and passthrough for GPU acceleration
 //! including Vulkan, DRM/KMS, and OpenGL ES on Android.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};

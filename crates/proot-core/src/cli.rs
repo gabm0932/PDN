@@ -1,10 +1,8 @@
 //! CLI configuration for PRoot
 
-use crate::arch::Arch;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
 
 /// PRoot CLI configuration
 #[derive(Parser, Debug, Clone)]

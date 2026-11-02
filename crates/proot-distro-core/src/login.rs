@@ -1,10 +1,8 @@
 //! Login management for PRoot Distro
 
 use crate::bindings::BindMount;
-use crate::container::Container;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 /// Login options
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,8 +64,8 @@ impl LoginManager {
 
     pub fn login(
         &self,
-        container: &crate::container::Container,
-        options: &LoginOptions,
+        _container: &crate::container::Container,
+        _options: &LoginOptions,
     ) -> Result<()> {
         // Execute proot with container config
         Ok(())
@@ -75,8 +73,8 @@ impl LoginManager {
 
     pub fn execute(
         &self,
-        container: &crate::container::Container,
-        command: &[String],
+        _container: &crate::container::Container,
+        _command: &[String],
     ) -> Result<()> {
         Ok(())
     }

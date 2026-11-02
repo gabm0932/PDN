@@ -1,30 +1,19 @@
 //! Ptrace controller for PRoot
 
 use anyhow::{anyhow, Result};
-use libc::{c_int, c_long, c_void, iovec, pid_t, siginfo_t, user_regs_struct};
-use libc::{
-    ptrace, PTRACE_ATTACH, PTRACE_CONT, PTRACE_DETACH, PTRACE_GETEVENTMSG, PTRACE_GETREGS,
-    PTRACE_GETREGSET, PTRACE_GETSIGINFO, PTRACE_KILL, PTRACE_PEEKDATA, PTRACE_PEEKTEXT,
-    PTRACE_PEEKUSER, PTRACE_POKEDATA, PTRACE_POKETEXT, PTRACE_POKEUSER, PTRACE_SETOPTIONS,
-    PTRACE_SETREGS, PTRACE_SETREGSET, PTRACE_SETSIGINFO, PTRACE_SINGLESTEP, PTRACE_SYSCALL,
-    PTRACE_TRACEME,
-};
 use nix::sys::ptrace::{self, Options};
 use nix::sys::signal::Signal;
-use nix::sys::wait::{waitpid, WaitStatus};
+use nix::sys::wait::WaitStatus;
 use nix::unistd::Pid;
 use parking_lot::Mutex;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, trace, warn};
 
-use crate::arch::{Arch, Arch::Arm64};
+use crate::arch::Arch;
 use crate::path::PathTranslator;
 use crate::syscall::SyscallHandler;
-use crate::tracee::{
-    MountInfo, PathInfo, RawSyscall, Registers, SyscallInfo, Tracee, TraceeState, VfsContext,
-};
+use crate::tracee::Tracee;
 use crate::tracee_state::TraceeStateManager;
 use crate::vfs::VfsManager;
 
@@ -47,7 +36,7 @@ pub enum PtraceEvent {
 impl PtraceEvent {
     pub fn from_wait_status(status: WaitStatus) -> Option<Self> {
         match status {
-            WaitStatus::PtraceEvent(pid, event, _) => match event as i32 {
+            WaitStatus::PtraceEvent(_pid, event, _) => match event as i32 {
                 1 => Some(PtraceEvent::Clone),
                 2 => Some(PtraceEvent::Fork),
                 3 => Some(PtraceEvent::Vfork),
@@ -55,10 +44,10 @@ impl PtraceEvent {
                 7 => Some(PtraceEvent::Seccomp),
                 _ => Some(PtraceEvent::Unknown(event as i32)),
             },
-            WaitStatus::PtraceSyscall(pid) => Some(PtraceEvent::SyscallEntry),
-            WaitStatus::Signaled(pid, signal, _) => Some(PtraceEvent::Signal(signal)),
-            WaitStatus::Exited(pid, code) => Some(PtraceEvent::Exit),
-            WaitStatus::Stopped(pid, signal) => Some(PtraceEvent::Stop),
+            WaitStatus::PtraceSyscall(_pid) => Some(PtraceEvent::SyscallEntry),
+            WaitStatus::Signaled(_pid, signal, _) => Some(PtraceEvent::Signal(signal)),
+            WaitStatus::Exited(_pid, _code) => Some(PtraceEvent::Exit),
+            WaitStatus::Stopped(_pid, _signal) => Some(PtraceEvent::Stop),
             _ => None,
         }
     }

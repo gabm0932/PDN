@@ -4,8 +4,8 @@ use anyhow::Result;
 use bzip2::{read::BzDecoder, write::BzEncoder, Compression as BzipCompression};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression as FlateCompression};
 use std::fs;
-use std::io::{BufReader, BufWriter, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{BufReader, BufWriter};
+use std::path::Path;
 use tar::{Archive, Builder};
 use xz2::read::XzDecoder;
 use xz2::write::XzEncoder;
@@ -173,7 +173,7 @@ impl Compressor {
 
     fn extract_tar_gz(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        let mut decoder = GzDecoder::new(BufReader::new(input_file));
+        let decoder = GzDecoder::new(BufReader::new(input_file));
         let mut archive = Archive::new(decoder);
         archive.unpack(output)?;
         Ok(())
@@ -181,7 +181,7 @@ impl Compressor {
 
     fn extract_tar_bz2(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        let mut decoder = BzDecoder::new(BufReader::new(input_file));
+        let decoder = BzDecoder::new(BufReader::new(input_file));
         let mut archive = Archive::new(decoder);
         archive.unpack(output)?;
         Ok(())
@@ -189,7 +189,7 @@ impl Compressor {
 
     fn extract_tar_xz(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        let mut decoder = XzDecoder::new(BufReader::new(input_file));
+        let decoder = XzDecoder::new(BufReader::new(input_file));
         let mut archive = Archive::new(decoder);
         archive.unpack(output)?;
         Ok(())

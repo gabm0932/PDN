@@ -10,7 +10,7 @@ pub fn read_guest_bytes(
     rootfs: &Path,
     path: &Path,
     max_bytes: usize,
-    root_fd: Option<std::os::unix::io::RawFd>,
+    _root_fd: Option<std::os::unix::io::RawFd>,
 ) -> Result<Vec<u8>> {
     let full_path = rootfs.join(path.strip_prefix("/").unwrap_or(path));
 
@@ -26,7 +26,7 @@ pub fn write_guest_bytes(
     rootfs: &Path,
     path: &Path,
     data: &[u8],
-    root_fd: Option<std::os::unix::io::RawFd>,
+    _root_fd: Option<std::os::unix::io::RawFd>,
 ) -> Result<()> {
     let full_path = rootfs.join(path.strip_prefix("/").unwrap_or(path));
 

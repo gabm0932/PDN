@@ -4,7 +4,6 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -22,7 +21,7 @@ impl SessionManager {
 
     pub fn create(
         &self,
-        container_name: &str,
+        _container_name: &str,
         options: &crate::login::LoginOptions,
     ) -> Result<Session> {
         let id = Uuid::new_v4().to_string();

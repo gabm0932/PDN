@@ -1,9 +1,8 @@
 //! Directory file descriptor management
 
 use anyhow::Result;
-use std::fs;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;

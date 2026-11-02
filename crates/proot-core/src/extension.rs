@@ -1,11 +1,5 @@
 //! Extension system for PRoot
 
-use crate::syscall::SyscallHandler;
-use crate::tracee::Tracee;
-use anyhow::Result;
-use std::collections::HashMap;
-use std::sync::Arc;
-
 /// Extension trait for PRoot extensions
 pub trait Extension: Send + Sync {
     fn name(&self) -> &str;

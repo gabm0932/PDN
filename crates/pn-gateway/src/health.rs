@@ -1,14 +1,13 @@
 //! Health monitoring for PN Gateway
 
-use super::config::{HealthCheck, HealthCheckType, HealthConfig, RecoveryAction};
+use super::config::{HealthCheckType, HealthConfig};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio::time::interval;
-use tracing::{debug, error, info, warn};
 
 /// Health check handler type identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -79,7 +78,7 @@ impl HealthMonitor {
             let status = self.status.clone();
             let handlers = self.check_handlers.clone();
 
-            let handle = tokio::spawn(async move {
+            let _handle = tokio::spawn(async move {
                 let mut interval_timer = interval(check_interval);
 
                 loop {
@@ -233,7 +232,7 @@ struct DiskSpaceCheckHandler;
 impl HealthCheckHandler for DiskSpaceCheckHandler {
     fn check(&self, target: &str) -> anyhow::Result<String> {
         use std::fs;
-        let stat = fs::metadata(target)?;
+        let _stat = fs::metadata(target)?;
         // Simplified - in reality use statvfs
         Ok(format!("Disk space check for {} passed", target))
     }
@@ -244,7 +243,7 @@ struct MemoryUsageCheckHandler;
 impl HealthCheckHandler for MemoryUsageCheckHandler {
     fn check(&self, _target: &str) -> anyhow::Result<String> {
         // Read from /proc/meminfo
-        let content = std::fs::read_to_string("/proc/meminfo")?;
+        let _content = std::fs::read_to_string("/proc/meminfo")?;
         // Parse and calculate usage
         Ok("Memory usage check passed".to_string())
     }
@@ -264,8 +263,6 @@ struct NetworkConnectivityCheckHandler;
 impl HealthCheckHandler for NetworkConnectivityCheckHandler {
     fn check(&self, target: &str) -> anyhow::Result<String> {
         // Simple ping or TCP connect test
-        use std::net::TcpStream;
-        use std::time::Duration;
 
         let parts: Vec<&str> = target.split(':').collect();
         if parts.len() == 2 {

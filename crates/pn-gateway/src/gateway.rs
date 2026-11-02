@@ -1,16 +1,8 @@
 //! Gateway module for PN Gateway
 
-use super::config::{GatewayConfig, GatewayState};
-use super::fail_safe::FailSafeManager;
-use super::guardrails::GuardrailManager;
-use super::health::HealthMonitor;
-use super::metrics::MetricsCollector;
-use anyhow::Result;
-use proot_compat::init_compat;
+use super::config::GatewayState;
 use proot_core::ProotEngine;
-use proot_distro_core::ProotDistroCore;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// PN Gateway - orchestrates PRoot, PRoot-distro, and proot-compat
@@ -85,7 +77,7 @@ impl PnGateway {
     pub async fn run_container(
         &mut self,
         container_name: &str,
-        args: Vec<String>,
+        _args: Vec<String>,
     ) -> anyhow::Result<()> {
         // Check guardrails before running
         self.guardrail_manager.check_all()?;

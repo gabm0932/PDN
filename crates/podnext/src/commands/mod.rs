@@ -5,54 +5,28 @@ use pn_next::{
     BackupConfig,
     // Phase 7 modules
     BackupManager,
-    BackupMetadata,
     BackupType,
-    BuildManager,
-    BuildServiceConfig,
-    BuildSpec,
-    ContainerHealthCheckConfig,
     ContainerSocketConfig,
-    ContainerSocketEvent,
     ContainerSocketManager,
     DBusBroker,
     DBusBrokerConfig,
-    DaemonHealthCheckConfig,
-    DaemonRestartPolicy,
     DaemonRuntime,
     DaemonRuntimeConfig,
-    GitOpsConfig,
-    GitOpsManager,
-    HealthCheckType,
-    HealthStatus,
-    LogEntry,
     LogLevel,
     LogQuery,
-    ManagedService,
-    PolicyAction,
-    PolicyCondition,
     PolicyEngine,
     PolicyEngineConfig,
-    PolicyRule,
-    QuotaViolationAction,
     ResourceQuotaConfig,
     ResourceQuotaManager,
     ResourceQuotas,
-    RestartCondition,
-    RestartPolicy as SupervisorRestartPolicy,
     RestoreOptions,
     ServiceState,
-    ServiceStatus,
     ServiceSupervisor,
     SocketActivationConfig,
     SocketActivationManager,
-    SocketConfig,
-    SocketType,
     StructuredLogging,
     StructuredLoggingConfig,
     SupervisorBuilder,
-    SupervisorConfig,
-    SupervisorHealthCheckConfig,
-    TargetArch,
     TermuxBootConfig,
     TermuxBootManager,
     WakeLockConfig,
@@ -63,7 +37,7 @@ use pn_next::{
     WebDashboard,
     WebDashboardConfig,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json;
 use serde_yaml;
 use std::collections::HashMap;
@@ -145,7 +119,7 @@ async fn cmd_service_start(name: String) -> Result<()> {
     // Try daemon first
     if is_daemon_running().await {
         let resp = send_daemon_command(serde_json::json!({"cmd": "start", "name": name})).await?;
-        if let Some(err) = resp
+        if let Some(_err) = resp
             .get("type")
             .and_then(|t| t.as_str())
             .filter(|&t| t == "error")
@@ -189,7 +163,7 @@ async fn cmd_service_stop(name: String, force: bool) -> Result<()> {
         let resp =
             send_daemon_command(serde_json::json!({"cmd": "stop", "name": name, "force": force}))
                 .await?;
-        if let Some(err) = resp
+        if let Some(_err) = resp
             .get("type")
             .and_then(|t| t.as_str())
             .filter(|&t| t == "error")
@@ -215,7 +189,7 @@ async fn cmd_service_restart(name: String) -> Result<()> {
 
     if is_daemon_running().await {
         let resp = send_daemon_command(serde_json::json!({"cmd": "restart", "name": name})).await?;
-        if let Some(err) = resp
+        if let Some(_err) = resp
             .get("type")
             .and_then(|t| t.as_str())
             .filter(|&t| t == "error")
@@ -239,7 +213,7 @@ async fn cmd_service_restart(name: String) -> Result<()> {
 async fn cmd_service_list(format: crate::OutputFormat) -> Result<()> {
     if is_daemon_running().await {
         let resp = send_daemon_command(serde_json::json!({"cmd": "list"})).await?;
-        if let Some(err) = resp
+        if let Some(_err) = resp
             .get("type")
             .and_then(|t| t.as_str())
             .filter(|&t| t == "error")
@@ -266,7 +240,7 @@ async fn cmd_service_list(format: crate::OutputFormat) -> Result<()> {
 async fn cmd_service_status(name: String, format: crate::OutputFormat) -> Result<()> {
     if is_daemon_running().await {
         let resp = send_daemon_command(serde_json::json!({"cmd": "status", "name": name})).await?;
-        if let Some(err) = resp
+        if let Some(_err) = resp
             .get("type")
             .and_then(|t| t.as_str())
             .filter(|&t| t == "error")
@@ -559,7 +533,7 @@ fn print_service_status_local(
     Ok(())
 }
 
-async fn cmd_service_logs(name: String, follow: bool, lines: usize) -> Result<()> {
+async fn cmd_service_logs(name: String, _follow: bool, lines: usize) -> Result<()> {
     println!("Service '{}' logs (last {} lines):", name, lines);
     println!(
         "(Log viewing not yet implemented - use 'podnext log query --service {}')",
@@ -589,7 +563,7 @@ async fn cmd_service_load(name: String) -> Result<()> {
         "/data/data/com.termux/files/home/.config/pn-next/services".to_string()
     });
     let config_path = PathBuf::from(services_dir).join(format!("{}.toml", name));
-    let service_config = ServiceSupervisor::load_service_from_file(&config_path).await?;
+    let _service_config = ServiceSupervisor::load_service_from_file(&config_path).await?;
     println!("Service '{}' loaded from {}", name, config_path.display());
     Ok(())
 }
@@ -600,7 +574,7 @@ async fn cmd_service_create(name: String, config: PathBuf) -> Result<()> {
         name,
         config.display()
     );
-    let service_config = ServiceSupervisor::load_service_from_file(&config).await?;
+    let _service_config = ServiceSupervisor::load_service_from_file(&config).await?;
     println!("Service '{}' created from config", name);
     Ok(())
 }
@@ -666,7 +640,7 @@ async fn cmd_daemon_reload() -> Result<()> {
     Ok(())
 }
 
-async fn cmd_daemon_logs(follow: bool, lines: usize) -> Result<()> {
+async fn cmd_daemon_logs(_follow: bool, lines: usize) -> Result<()> {
     println!("Daemon logs (last {} lines):", lines);
     Ok(())
 }
@@ -951,13 +925,13 @@ async fn cmd_quota_get(name: String, format: crate::OutputFormat) -> Result<()> 
     Ok(())
 }
 
-async fn cmd_quota_usage(name: String, format: crate::OutputFormat) -> Result<()> {
+async fn cmd_quota_usage(name: String, _format: crate::OutputFormat) -> Result<()> {
     println!("Resource usage for '{}':", name);
     println!("(Usage collection not yet implemented)");
     Ok(())
 }
 
-async fn cmd_quota_list(format: crate::OutputFormat) -> Result<()> {
+async fn cmd_quota_list(_format: crate::OutputFormat) -> Result<()> {
     println!("All resource quotas:");
     Ok(())
 }
@@ -1194,7 +1168,7 @@ async fn cmd_dbus_call(
     path: String,
     interface: String,
     method: String,
-    args: Vec<String>,
+    _args: Vec<String>,
 ) -> Result<()> {
     println!(
         "Calling D-Bus method: {}.{} on {} at {}",
@@ -1236,7 +1210,7 @@ async fn cmd_socket_unregister(name: String) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_socket_list(format: crate::OutputFormat) -> Result<()> {
+async fn cmd_socket_list(_format: crate::OutputFormat) -> Result<()> {
     println!("Socket activations:");
     Ok(())
 }
@@ -1395,8 +1369,8 @@ pub async fn execute_policy_command(cmd: crate::PolicyCommands) -> Result<()> {
     }
 }
 
-async fn cmd_policy_eval(name: String, format: crate::OutputFormat) -> Result<()> {
-    let engine = PolicyEngine::new(PolicyEngineConfig::default());
+async fn cmd_policy_eval(name: String, _format: crate::OutputFormat) -> Result<()> {
+    let _engine = PolicyEngine::new(PolicyEngineConfig::default());
     println!("Evaluating policies for '{}'...", name);
     println!("(Policy evaluation not yet implemented)");
     Ok(())
@@ -1490,7 +1464,7 @@ async fn cmd_backup_create(
     manager: &BackupManager,
     container: String,
     backup_type: crate::BackupTypeArg,
-    format: crate::OutputFormat,
+    _format: crate::OutputFormat,
 ) -> Result<()> {
     let bt = match backup_type {
         crate::BackupTypeArg::Full => BackupType::Full,
@@ -1624,7 +1598,7 @@ async fn cmd_backup_status(manager: &BackupManager, backup_id: String) -> Result
     Ok(())
 }
 
-async fn cmd_backup_config(manager: &BackupManager) -> Result<()> {
+async fn cmd_backup_config(_manager: &BackupManager) -> Result<()> {
     // Access config directly since it's not exposed via get_config
     println!("Backup Configuration:");
     println!("  (Config access not directly available via API)");
@@ -1646,13 +1620,13 @@ pub async fn execute_build_command(cmd: crate::BuildCommands) -> Result<()> {
     }
 }
 
-async fn cmd_build_submit(spec: PathBuf, format: crate::OutputFormat) -> Result<()> {
+async fn cmd_build_submit(spec: PathBuf, _format: crate::OutputFormat) -> Result<()> {
     println!("Submitting build from spec '{}'...", spec.display());
     println!("(Build submission not yet implemented)");
     Ok(())
 }
 
-async fn cmd_build_status(build_id: String, format: crate::OutputFormat) -> Result<()> {
+async fn cmd_build_status(build_id: String, _format: crate::OutputFormat) -> Result<()> {
     println!("Build '{}' status: (not yet implemented)", build_id);
     Ok(())
 }
@@ -1663,7 +1637,7 @@ async fn cmd_build_cancel(build_id: String) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_build_list(status: Option<String>, format: crate::OutputFormat) -> Result<()> {
+async fn cmd_build_list(status: Option<String>, _format: crate::OutputFormat) -> Result<()> {
     println!(
         "Listing builds{}...",
         status
@@ -1713,12 +1687,12 @@ async fn cmd_gitops_sync(force: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_gitops_status(format: crate::OutputFormat) -> Result<()> {
+async fn cmd_gitops_status(_format: crate::OutputFormat) -> Result<()> {
     println!("GitOps status: (not yet implemented)");
     Ok(())
 }
 
-async fn cmd_gitops_resources(kind: Option<String>, format: crate::OutputFormat) -> Result<()> {
+async fn cmd_gitops_resources(kind: Option<String>, _format: crate::OutputFormat) -> Result<()> {
     println!(
         "Listing GitOps resources{}...",
         kind.as_ref()
@@ -1729,7 +1703,7 @@ async fn cmd_gitops_resources(kind: Option<String>, format: crate::OutputFormat)
     Ok(())
 }
 
-async fn cmd_gitops_drift(format: crate::OutputFormat) -> Result<()> {
+async fn cmd_gitops_drift(_format: crate::OutputFormat) -> Result<()> {
     println!("Checking for drift: (not yet implemented)");
     Ok(())
 }
@@ -1766,7 +1740,7 @@ pub async fn execute_dashboard_command(cmd: crate::DashboardCommands) -> Result<
     }
 }
 
-async fn cmd_dashboard_start(dashboard: WebDashboard, port: u16, bind: String) -> Result<()> {
+async fn cmd_dashboard_start(_dashboard: WebDashboard, port: u16, bind: String) -> Result<()> {
     println!("Starting dashboard on {}:{}...", bind, port);
     // Note: This will run forever, so we just print the info
     println!("Dashboard would start on {}:{}", bind, port);

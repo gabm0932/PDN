@@ -1,8 +1,6 @@
 //! Tracee state management for PRoot
 
-use crate::tracee::{PathInfo, SyscallInfo, Tracee, TraceeState};
-use anyhow::Result;
-use nix::unistd::Pid;
+use crate::tracee::{Tracee, TraceeState};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

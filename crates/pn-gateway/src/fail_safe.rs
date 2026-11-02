@@ -1,12 +1,11 @@
 //! Fail-safe manager for PN Gateway
 
-use super::config::{CircuitBreakerConfig, CircuitBreakerState, FailSafeAction, FailSafeConfig};
+use super::config::{CircuitBreakerState, FailSafeAction, FailSafeConfig};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
 
 /// Fail-safe manager for handling failures gracefully
 pub struct FailSafeManager {

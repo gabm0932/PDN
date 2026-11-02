@@ -1,6 +1,5 @@
 //! Architecture definitions for PRoot
 
-use libc::{c_int, c_long, c_void};
 use std::fmt;
 
 /// Supported architectures

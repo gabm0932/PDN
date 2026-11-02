@@ -1,12 +1,9 @@
 //! System call handler for PRoot
 
 use anyhow::Result;
-use libc::{c_int, c_long};
 use std::collections::HashMap;
 
-use crate::arch::Arch;
-use crate::path::PathTranslator;
-use crate::tracee::{PathInfo, SyscallInfo, Tracee, TraceeState};
+use crate::tracee::{PathInfo, SyscallInfo, TraceeState};
 use crate::tracee_state::TraceeStateManager;
 use crate::vfs::VfsManager;
 
@@ -83,7 +80,7 @@ impl SyscallHandler {
         // open, openat, openat2
         handlers.insert(
             56,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // open
                 Ok(())
             }),
@@ -91,7 +88,7 @@ impl SyscallHandler {
 
         handlers.insert(
             257,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // openat
                 Ok(())
             }),
@@ -100,7 +97,7 @@ impl SyscallHandler {
         // openat2 - Android
         handlers.insert(
             437,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // openat2
                 Ok(())
             }),
@@ -109,7 +106,7 @@ impl SyscallHandler {
         // mkdir, mkdirat
         handlers.insert(
             34,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // mkdir
                 Ok(())
             }),
@@ -117,7 +114,7 @@ impl SyscallHandler {
 
         handlers.insert(
             258,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // mkdirat
                 Ok(())
             }),
@@ -126,7 +123,7 @@ impl SyscallHandler {
         // rmdir
         handlers.insert(
             49,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // rmdir
                 Ok(())
             }),
@@ -135,7 +132,7 @@ impl SyscallHandler {
         // unlink, unlinkat
         handlers.insert(
             263,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // unlinkat
                 Ok(())
             }),
@@ -144,7 +141,7 @@ impl SyscallHandler {
         // rename, renameat, renameat2
         handlers.insert(
             38,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // rename
                 Ok(())
             }),
@@ -152,7 +149,7 @@ impl SyscallHandler {
 
         handlers.insert(
             264,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // renameat
                 Ok(())
             }),
@@ -160,7 +157,7 @@ impl SyscallHandler {
 
         handlers.insert(
             38,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // renameat2 (same as rename on aarch64)
                 Ok(())
             }),
@@ -169,7 +166,7 @@ impl SyscallHandler {
         // link, linkat
         handlers.insert(
             37,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // link
                 Ok(())
             }),
@@ -177,7 +174,7 @@ impl SyscallHandler {
 
         handlers.insert(
             265,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // linkat
                 Ok(())
             }),
@@ -186,7 +183,7 @@ impl SyscallHandler {
         // symlink, symlinkat
         handlers.insert(
             88,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // symlink
                 Ok(())
             }),
@@ -194,7 +191,7 @@ impl SyscallHandler {
 
         handlers.insert(
             89,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // symlinkat
                 Ok(())
             }),
@@ -203,7 +200,7 @@ impl SyscallHandler {
         // readlink, readlinkat
         handlers.insert(
             89,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // readlink
                 Ok(())
             }),
@@ -211,7 +208,7 @@ impl SyscallHandler {
 
         handlers.insert(
             89,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // readlinkat
                 Ok(())
             }),
@@ -220,7 +217,7 @@ impl SyscallHandler {
         // chdir, fchdir
         handlers.insert(
             80,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // chdir
                 Ok(())
             }),
@@ -228,7 +225,7 @@ impl SyscallHandler {
 
         handlers.insert(
             81,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fchdir
                 Ok(())
             }),
@@ -237,7 +234,7 @@ impl SyscallHandler {
         // getcwd
         handlers.insert(
             79,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // getcwd
                 Ok(())
             }),
@@ -246,7 +243,7 @@ impl SyscallHandler {
         // chroot
         handlers.insert(
             61,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // chroot
                 Ok(())
             }),
@@ -257,7 +254,7 @@ impl SyscallHandler {
         // read, write
         handlers.insert(
             63,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // read
                 Ok(())
             }),
@@ -265,7 +262,7 @@ impl SyscallHandler {
 
         handlers.insert(
             64,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // write
                 Ok(())
             }),
@@ -274,7 +271,7 @@ impl SyscallHandler {
         // readv, writev
         handlers.insert(
             65,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // readv
                 Ok(())
             }),
@@ -282,7 +279,7 @@ impl SyscallHandler {
 
         handlers.insert(
             66,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // writev
                 Ok(())
             }),
@@ -291,7 +288,7 @@ impl SyscallHandler {
         // pread, pwrite
         handlers.insert(
             67,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pread
                 Ok(())
             }),
@@ -299,7 +296,7 @@ impl SyscallHandler {
 
         handlers.insert(
             68,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pwrite
                 Ok(())
             }),
@@ -308,7 +305,7 @@ impl SyscallHandler {
         // readv, writev
         handlers.insert(
             65,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // readv
                 Ok(())
             }),
@@ -316,7 +313,7 @@ impl SyscallHandler {
 
         handlers.insert(
             66,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // writev
                 Ok(())
             }),
@@ -325,7 +322,7 @@ impl SyscallHandler {
         // lseek
         handlers.insert(
             62,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // lseek
                 Ok(())
             }),
@@ -334,7 +331,7 @@ impl SyscallHandler {
         // fstat, fstatat, stat, lstat, statx
         handlers.insert(
             80,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fstat
                 Ok(())
             }),
@@ -342,7 +339,7 @@ impl SyscallHandler {
 
         handlers.insert(
             79,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // stat
                 Ok(())
             }),
@@ -350,7 +347,7 @@ impl SyscallHandler {
 
         handlers.insert(
             81,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // lstat
                 Ok(())
             }),
@@ -358,7 +355,7 @@ impl SyscallHandler {
 
         handlers.insert(
             291,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // statx
                 Ok(())
             }),
@@ -367,7 +364,7 @@ impl SyscallHandler {
         // chmod, fchmod, fchmodat
         handlers.insert(
             90,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // chmod
                 Ok(())
             }),
@@ -375,7 +372,7 @@ impl SyscallHandler {
 
         handlers.insert(
             268,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fchmodat
                 Ok(())
             }),
@@ -384,7 +381,7 @@ impl SyscallHandler {
         // chown, fchown, fchownat, lchown
         handlers.insert(
             92,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // chown
                 Ok(())
             }),
@@ -392,7 +389,7 @@ impl SyscallHandler {
 
         handlers.insert(
             260,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fchownat
                 Ok(())
             }),
@@ -400,7 +397,7 @@ impl SyscallHandler {
 
         handlers.insert(
             93,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // lchown
                 Ok(())
             }),
@@ -409,7 +406,7 @@ impl SyscallHandler {
         // utime, utimensat, utimes
         handlers.insert(
             235,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // utimensat
                 Ok(())
             }),
@@ -418,7 +415,7 @@ impl SyscallHandler {
         // truncate, ftruncate
         handlers.insert(
             76,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // truncate
                 Ok(())
             }),
@@ -426,7 +423,7 @@ impl SyscallHandler {
 
         handlers.insert(
             77,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // ftruncate
                 Ok(())
             }),
@@ -435,7 +432,7 @@ impl SyscallHandler {
         // fallocate
         handlers.insert(
             324,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fallocate
                 Ok(())
             }),
@@ -444,7 +441,7 @@ impl SyscallHandler {
         // sync, fsync, fdatasync
         handlers.insert(
             74,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fsync
                 Ok(())
             }),
@@ -452,7 +449,7 @@ impl SyscallHandler {
 
         handlers.insert(
             75,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fdatasync
                 Ok(())
             }),
@@ -461,7 +458,7 @@ impl SyscallHandler {
         // sync
         handlers.insert(
             36,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sync
                 Ok(())
             }),
@@ -470,7 +467,7 @@ impl SyscallHandler {
         // pipe, pipe2
         handlers.insert(
             59,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pipe
                 Ok(())
             }),
@@ -478,7 +475,7 @@ impl SyscallHandler {
 
         handlers.insert(
             293,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pipe2
                 Ok(())
             }),
@@ -487,7 +484,7 @@ impl SyscallHandler {
         // dup, dup2, dup3
         handlers.insert(
             23,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // dup
                 Ok(())
             }),
@@ -495,7 +492,7 @@ impl SyscallHandler {
 
         handlers.insert(
             24,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // dup2
                 Ok(())
             }),
@@ -503,7 +500,7 @@ impl SyscallHandler {
 
         handlers.insert(
             24,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // dup3 (same as dup2 on aarch64)
                 Ok(())
             }),
@@ -512,7 +509,7 @@ impl SyscallHandler {
         // epoll
         handlers.insert(
             20,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // epoll_create
                 Ok(())
             }),
@@ -520,7 +517,7 @@ impl SyscallHandler {
 
         handlers.insert(
             21,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // epoll_create1
                 Ok(())
             }),
@@ -528,7 +525,7 @@ impl SyscallHandler {
 
         handlers.insert(
             23,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // epoll_ctl
                 Ok(())
             }),
@@ -536,7 +533,7 @@ impl SyscallHandler {
 
         handlers.insert(
             24,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // epoll_pwait
                 Ok(())
             }),
@@ -544,7 +541,7 @@ impl SyscallHandler {
 
         handlers.insert(
             441,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // epoll_pwait2
                 Ok(())
             }),
@@ -553,7 +550,7 @@ impl SyscallHandler {
         // inotify
         handlers.insert(
             253,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // inotify_init
                 Ok(())
             }),
@@ -561,7 +558,7 @@ impl SyscallHandler {
 
         handlers.insert(
             254,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // inotify_init1
                 Ok(())
             }),
@@ -569,7 +566,7 @@ impl SyscallHandler {
 
         handlers.insert(
             255,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // inotify_add_watch
                 Ok(())
             }),
@@ -577,7 +574,7 @@ impl SyscallHandler {
 
         handlers.insert(
             256,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // inotify_rm_watch
                 Ok(())
             }),
@@ -586,7 +583,7 @@ impl SyscallHandler {
         // timerfd
         handlers.insert(
             283,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // timerfd_create
                 Ok(())
             }),
@@ -594,7 +591,7 @@ impl SyscallHandler {
 
         handlers.insert(
             284,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // timerfd_settime
                 Ok(())
             }),
@@ -602,7 +599,7 @@ impl SyscallHandler {
 
         handlers.insert(
             285,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // timerfd_gettime
                 Ok(())
             }),
@@ -611,7 +608,7 @@ impl SyscallHandler {
         // eventfd
         handlers.insert(
             286,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // eventfd
                 Ok(())
             }),
@@ -619,7 +616,7 @@ impl SyscallHandler {
 
         handlers.insert(
             287,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // eventfd2
                 Ok(())
             }),
@@ -628,7 +625,7 @@ impl SyscallHandler {
         // signalfd
         handlers.insert(
             289,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // signalfd
                 Ok(())
             }),
@@ -636,7 +633,7 @@ impl SyscallHandler {
 
         handlers.insert(
             290,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // signalfd4
                 Ok(())
             }),
@@ -645,7 +642,7 @@ impl SyscallHandler {
         // fanotify
         handlers.insert(
             300,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fanotify_init
                 Ok(())
             }),
@@ -653,7 +650,7 @@ impl SyscallHandler {
 
         handlers.insert(
             301,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fanotify_mark
                 Ok(())
             }),
@@ -664,7 +661,7 @@ impl SyscallHandler {
         // clone, clone3
         handlers.insert(
             120,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // clone
                 Ok(())
             }),
@@ -672,7 +669,7 @@ impl SyscallHandler {
 
         handlers.insert(
             435,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // clone3
                 Ok(())
             }),
@@ -681,7 +678,7 @@ impl SyscallHandler {
         // fork, vfork
         handlers.insert(
             121,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fork
                 Ok(())
             }),
@@ -689,7 +686,7 @@ impl SyscallHandler {
 
         handlers.insert(
             122,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // vfork
                 Ok(())
             }),
@@ -698,7 +695,7 @@ impl SyscallHandler {
         // execve, execveat
         handlers.insert(
             221,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // execve
                 Ok(())
             }),
@@ -706,7 +703,7 @@ impl SyscallHandler {
 
         handlers.insert(
             221,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // execveat (same number on aarch64)
                 Ok(())
             }),
@@ -715,7 +712,7 @@ impl SyscallHandler {
         // exit, exit_group
         handlers.insert(
             93,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // exit
                 Ok(())
             }),
@@ -723,7 +720,7 @@ impl SyscallHandler {
 
         handlers.insert(
             94,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // exit_group
                 Ok(())
             }),
@@ -732,7 +729,7 @@ impl SyscallHandler {
         // wait, wait4, waitpid, waitid
         handlers.insert(
             114,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // wait4
                 Ok(())
             }),
@@ -740,7 +737,7 @@ impl SyscallHandler {
 
         handlers.insert(
             114,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // waitid (same number on aarch64)
                 Ok(())
             }),
@@ -749,7 +746,7 @@ impl SyscallHandler {
         // kill, tkill, tgkill
         handlers.insert(
             129,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // kill
                 Ok(())
             }),
@@ -757,7 +754,7 @@ impl SyscallHandler {
 
         handlers.insert(
             129,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // tkill
                 Ok(())
             }),
@@ -765,7 +762,7 @@ impl SyscallHandler {
 
         handlers.insert(
             129,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // tgkill
                 Ok(())
             }),
@@ -774,7 +771,7 @@ impl SyscallHandler {
         // getpid, getppid, gettid
         handlers.insert(
             172,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // getpid
                 Ok(())
             }),
@@ -782,7 +779,7 @@ impl SyscallHandler {
 
         handlers.insert(
             173,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // getppid
                 Ok(())
             }),
@@ -790,7 +787,7 @@ impl SyscallHandler {
 
         handlers.insert(
             178,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // gettid
                 Ok(())
             }),
@@ -799,7 +796,7 @@ impl SyscallHandler {
         // setuid, setgid, setgroups
         handlers.insert(
             146,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // setuid
                 Ok(())
             }),
@@ -807,7 +804,7 @@ impl SyscallHandler {
 
         handlers.insert(
             147,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // setgid
                 Ok(())
             }),
@@ -815,7 +812,7 @@ impl SyscallHandler {
 
         handlers.insert(
             150,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // setgroups
                 Ok(())
             }),
@@ -824,7 +821,7 @@ impl SyscallHandler {
         // prlimit
         handlers.insert(
             302,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // prlimit64
                 Ok(())
             }),
@@ -833,7 +830,7 @@ impl SyscallHandler {
         // setrlimit, getrlimit
         handlers.insert(
             163,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // getrlimit
                 Ok(())
             }),
@@ -841,7 +838,7 @@ impl SyscallHandler {
 
         handlers.insert(
             164,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // setrlimit
                 Ok(())
             }),
@@ -850,7 +847,7 @@ impl SyscallHandler {
         // sched
         handlers.insert(
             144,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_setparam
                 Ok(())
             }),
@@ -858,7 +855,7 @@ impl SyscallHandler {
 
         handlers.insert(
             145,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_getparam
                 Ok(())
             }),
@@ -866,7 +863,7 @@ impl SyscallHandler {
 
         handlers.insert(
             144,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_setscheduler
                 Ok(())
             }),
@@ -874,7 +871,7 @@ impl SyscallHandler {
 
         handlers.insert(
             145,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_getscheduler
                 Ok(())
             }),
@@ -882,7 +879,7 @@ impl SyscallHandler {
 
         handlers.insert(
             144,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_yield
                 Ok(())
             }),
@@ -890,7 +887,7 @@ impl SyscallHandler {
 
         handlers.insert(
             144,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_get_priority_max
                 Ok(())
             }),
@@ -898,7 +895,7 @@ impl SyscallHandler {
 
         handlers.insert(
             144,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_get_priority_min
                 Ok(())
             }),
@@ -906,7 +903,7 @@ impl SyscallHandler {
 
         handlers.insert(
             452,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_setattr
                 Ok(())
             }),
@@ -914,7 +911,7 @@ impl SyscallHandler {
 
         handlers.insert(
             452,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_getattr
                 Ok(())
             }),
@@ -923,7 +920,7 @@ impl SyscallHandler {
         // cpu affinity
         handlers.insert(
             203,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_setaffinity
                 Ok(())
             }),
@@ -931,7 +928,7 @@ impl SyscallHandler {
 
         handlers.insert(
             204,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_getaffinity
                 Ok(())
             }),
@@ -940,7 +937,7 @@ impl SyscallHandler {
         // ptrace
         handlers.insert(
             127,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // ptrace
                 Ok(())
             }),
@@ -949,7 +946,7 @@ impl SyscallHandler {
         // seccomp
         handlers.insert(
             317,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // seccomp
                 Ok(())
             }),
@@ -958,7 +955,7 @@ impl SyscallHandler {
         // perf_event
         handlers.insert(
             298,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // perf_event_open
                 Ok(())
             }),
@@ -967,7 +964,7 @@ impl SyscallHandler {
         // rseq
         handlers.insert(
             336,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // rseq
                 Ok(())
             }),
@@ -976,7 +973,7 @@ impl SyscallHandler {
         // membarrier
         handlers.insert(
             324,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // membarrier
                 Ok(())
             }),
@@ -985,7 +982,7 @@ impl SyscallHandler {
         // process_vm_readv/writev
         handlers.insert(
             347,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // process_vm_readv
                 Ok(())
             }),
@@ -993,7 +990,7 @@ impl SyscallHandler {
 
         handlers.insert(
             348,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // process_vm_writev
                 Ok(())
             }),
@@ -1002,7 +999,7 @@ impl SyscallHandler {
         // pidfd
         handlers.insert(
             424,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pidfd_send_signal
                 Ok(())
             }),
@@ -1010,7 +1007,7 @@ impl SyscallHandler {
 
         handlers.insert(
             434,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pidfd_open
                 Ok(())
             }),
@@ -1018,7 +1015,7 @@ impl SyscallHandler {
 
         handlers.insert(
             438,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pidfd_getfd
                 Ok(())
             }),
@@ -1027,7 +1024,7 @@ impl SyscallHandler {
         // landlock
         handlers.insert(
             444,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // landlock_create_ruleset
                 Ok(())
             }),
@@ -1035,7 +1032,7 @@ impl SyscallHandler {
 
         handlers.insert(
             445,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // landlock_add_rule
                 Ok(())
             }),
@@ -1043,7 +1040,7 @@ impl SyscallHandler {
 
         handlers.insert(
             446,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // landlock_restrict_self
                 Ok(())
             }),
@@ -1054,7 +1051,7 @@ impl SyscallHandler {
         // rseq
         handlers.insert(
             336,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // rseq
                 Ok(())
             }),
@@ -1063,7 +1060,7 @@ impl SyscallHandler {
         // membarrier
         handlers.insert(
             324,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // membarrier
                 Ok(())
             }),
@@ -1072,7 +1069,7 @@ impl SyscallHandler {
         // process_vm_readv/writev
         handlers.insert(
             347,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // process_vm_readv
                 Ok(())
             }),
@@ -1080,7 +1077,7 @@ impl SyscallHandler {
 
         handlers.insert(
             348,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // process_vm_writev
                 Ok(())
             }),
@@ -1089,7 +1086,7 @@ impl SyscallHandler {
         // clone3
         handlers.insert(
             435,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // clone3
                 Ok(())
             }),
@@ -1098,7 +1095,7 @@ impl SyscallHandler {
         // openat2
         handlers.insert(
             437,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // openat2
                 Ok(())
             }),
@@ -1107,7 +1104,7 @@ impl SyscallHandler {
         // mlock/munlock
         handlers.insert(
             151,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // mlock
                 Ok(())
             }),
@@ -1115,7 +1112,7 @@ impl SyscallHandler {
 
         handlers.insert(
             152,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // munlock
                 Ok(())
             }),
@@ -1124,7 +1121,7 @@ impl SyscallHandler {
         // faccessat2
         handlers.insert(
             439,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // faccessat2
                 Ok(())
             }),
@@ -1133,7 +1130,7 @@ impl SyscallHandler {
         // statx
         handlers.insert(
             291,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // statx
                 Ok(())
             }),
@@ -1142,7 +1139,7 @@ impl SyscallHandler {
         // io_pgetevents
         handlers.insert(
             301,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // io_pgetevents
                 Ok(())
             }),
@@ -1151,7 +1148,7 @@ impl SyscallHandler {
         // pidfd_send_signal
         handlers.insert(
             424,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pidfd_send_signal
                 Ok(())
             }),
@@ -1160,7 +1157,7 @@ impl SyscallHandler {
         // pidfd_open
         handlers.insert(
             434,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pidfd_open
                 Ok(())
             }),
@@ -1169,7 +1166,7 @@ impl SyscallHandler {
         // clone3
         handlers.insert(
             435,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // clone3
                 Ok(())
             }),
@@ -1178,7 +1175,7 @@ impl SyscallHandler {
         // openat2
         handlers.insert(
             437,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // openat2
                 Ok(())
             }),
@@ -1187,7 +1184,7 @@ impl SyscallHandler {
         // pidfd_getfd
         handlers.insert(
             438,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // pidfd_getfd
                 Ok(())
             }),
@@ -1196,7 +1193,7 @@ impl SyscallHandler {
         // faccessat2
         handlers.insert(
             439,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // faccessat2
                 Ok(())
             }),
@@ -1205,7 +1202,7 @@ impl SyscallHandler {
         // process_madvise
         handlers.insert(
             440,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // process_madvise
                 Ok(())
             }),
@@ -1214,7 +1211,7 @@ impl SyscallHandler {
         // epoll_pwait2
         handlers.insert(
             441,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // epoll_pwait2
                 Ok(())
             }),
@@ -1223,7 +1220,7 @@ impl SyscallHandler {
         // mount_setattr
         handlers.insert(
             442,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // mount_setattr
                 Ok(())
             }),
@@ -1232,7 +1229,7 @@ impl SyscallHandler {
         // quotactl_fd
         handlers.insert(
             443,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // quotactl_fd
                 Ok(())
             }),
@@ -1241,7 +1238,7 @@ impl SyscallHandler {
         // landlock
         handlers.insert(
             444,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // landlock_create_ruleset
                 Ok(())
             }),
@@ -1249,7 +1246,7 @@ impl SyscallHandler {
 
         handlers.insert(
             445,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // landlock_add_rule
                 Ok(())
             }),
@@ -1257,7 +1254,7 @@ impl SyscallHandler {
 
         handlers.insert(
             446,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // landlock_restrict_self
                 Ok(())
             }),
@@ -1266,7 +1263,7 @@ impl SyscallHandler {
         // memfd_secret
         handlers.insert(
             447,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // memfd_secret
                 Ok(())
             }),
@@ -1275,7 +1272,7 @@ impl SyscallHandler {
         // process_mrelease
         handlers.insert(
             448,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // process_mrelease
                 Ok(())
             }),
@@ -1284,7 +1281,7 @@ impl SyscallHandler {
         // futex_waitv
         handlers.insert(
             449,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // futex_waitv
                 Ok(())
             }),
@@ -1293,7 +1290,7 @@ impl SyscallHandler {
         // set_mempolicy_home_node
         handlers.insert(
             450,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // set_mempolicy_home_node
                 Ok(())
             }),
@@ -1302,7 +1299,7 @@ impl SyscallHandler {
         // cachedctl
         handlers.insert(
             451,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // cachedctl
                 Ok(())
             }),
@@ -1311,7 +1308,7 @@ impl SyscallHandler {
         // sched_setattr
         handlers.insert(
             452,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // sched_setattr
                 Ok(())
             }),
@@ -1320,7 +1317,7 @@ impl SyscallHandler {
         // move_mount
         handlers.insert(
             453,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // move_mount
                 Ok(())
             }),
@@ -1329,7 +1326,7 @@ impl SyscallHandler {
         // fsopen
         handlers.insert(
             454,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fsopen
                 Ok(())
             }),
@@ -1337,7 +1334,7 @@ impl SyscallHandler {
 
         handlers.insert(
             455,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fsconfig
                 Ok(())
             }),
@@ -1345,7 +1342,7 @@ impl SyscallHandler {
 
         handlers.insert(
             456,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fsmount
                 Ok(())
             }),
@@ -1353,7 +1350,7 @@ impl SyscallHandler {
 
         handlers.insert(
             457,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // fspick
                 Ok(())
             }),
@@ -1361,7 +1358,7 @@ impl SyscallHandler {
 
         handlers.insert(
             458,
-            Box::new(|state, info, path_info, tracee_mgr, vfs_mgr| {
+            Box::new(|_state, _info, _path_info, _tracee_mgr, _vfs_mgr| {
                 // move_pages
                 Ok(())
             }),

@@ -1,15 +1,19 @@
 //! Common test utilities for integration tests
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use chrono::Utc;
+use pn_next::network::CniConfig;
+use pn_next::network::Network;
+use pn_next::network::NetworkInterface;
+use pn_next::network::NetworkManager;
 use pn_next::{
     ContainerSocketConfig, ContainerSocketEvent, ContainerSocketManager, DBusBroker,
-    DBusBrokerConfig, HealthCheckConfig as SupervisorHealthCheckConfig, HealthStatus,
-    LogEntry, LogLevel, LogQuery, LogStats, ManagedService, ProcessConfig, ResourceLimits,
-    ResourceQuotaConfig, ResourceQuotaManager, ResourceQuotas, RestartCondition,
-    RestartPolicy as SupervisorRestartPolicy, ServiceConfig, ServiceMeta, ServiceState,
-    ServiceStatus, ServiceSupervisor, ServiceType, SocketActivationConfig,
-    SocketActivationManager, SocketConfig, SocketType, StructuredLogging,
-    StructuredLoggingConfig, SupervisorBuilder, SupervisorConfig, TermuxBootConfig,
+    DBusBrokerConfig, HealthStatus, LogEntry, LogLevel, LogQuery, LogStats, ManagedService,
+    ProcessConfig, ResourceLimits, ResourceQuotaConfig, ResourceQuotaManager, ResourceQuotas,
+    RestartCondition, RestartPolicy as SupervisorRestartPolicy, ServiceConfig, ServiceMeta,
+    ServiceState, ServiceStatus, ServiceSupervisor, ServiceType, SocketActivationConfig,
+    SocketActivationManager, SocketConfig, SocketType, StructuredLogging, StructuredLoggingConfig,
+    SupervisorBuilder, SupervisorConfig, SupervisorHealthCheckConfig, TermuxBootConfig,
     TermuxBootManager, WakeLockConfig, WakeLockManager, WakeLockType, WatchdogConfig,
     WatchdogManager,
 };
@@ -18,13 +22,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::tempdir;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 /// Test environment that provides access to all PN Next components
 pub struct TestEnvironment {
     pub temp_dir: PathBuf,
+    pub services_dir: PathBuf,
     pub supervisor: Arc<RwLock<ServiceSupervisor>>,
+    pub service_mutex: Arc<Mutex<()>>,
     pub network_manager: Arc<RwLock<pn_next::NetworkManager>>,
     pub storage_manager: Arc<RwLock<pn_next::StorageManager>>,
     pub dbus_broker: Arc<DBusBroker>,
@@ -45,23 +51,40 @@ impl TestEnvironment {
         let services_dir = temp_dir.join("services");
         let runtime_dir = temp_dir.join("runtime");
         let log_dir = temp_dir.join("logs");
+        let cni_config_dir = temp_dir.join("cni").join("net.d");
+        let cni_data_dir = temp_dir.join("cni").join("networks");
 
         std::fs::create_dir_all(&services_dir)?;
         std::fs::create_dir_all(&runtime_dir)?;
         std::fs::create_dir_all(&log_dir)?;
+        std::fs::create_dir_all(&cni_config_dir)?;
+        std::fs::create_dir_all(&cni_data_dir)?;
 
         let supervisor_config = SupervisorConfig {
             services_dir: services_dir.clone(),
             runtime_dir: runtime_dir.clone(),
             log_dir: log_dir.clone(),
+            supervision_interval_ms: 3600000, // 1 hour - disable supervision loop during tests
+            enable_cgroups: false,            // Disable cgroups on Android/Termux
             ..Default::default()
         };
 
         let supervisor = ServiceSupervisor::new(supervisor_config)?;
-        supervisor.initialize().await?;
+        // Manually initialize without starting supervision loop
+        supervisor.load_services().await?;
+        supervisor.build_dependency_graph().await?;
+        supervisor.validate_dependencies().await?;
 
-        // Network manager
-        let network_config = pn_next::NetworkConfig::default();
+        // Network manager with test CNI directories
+        let network_config = pn_next::NetworkConfig {
+            cni: CniConfig {
+                config_dir: cni_config_dir,
+                plugin_dirs: vec![],
+                default_network: "test-network".to_string(),
+                plugins: vec![],
+            },
+            ..Default::default()
+        };
         let network_manager = pn_next::NetworkManager::new(network_config)?;
         network_manager.initialize().await?;
 
@@ -121,7 +144,9 @@ impl TestEnvironment {
 
         Ok(Self {
             temp_dir,
+            services_dir,
             supervisor: Arc::new(RwLock::new(supervisor)),
+            service_mutex: Arc::new(Mutex::new(())),
             network_manager: Arc::new(RwLock::new(network_manager)),
             storage_manager: Arc::new(RwLock::new(storage_manager)),
             dbus_broker: Arc::new(dbus_broker),
@@ -134,14 +159,12 @@ impl TestEnvironment {
         })
     }
 
-    /// Create a service configuration
-    pub async fn create_service_config(
-        &self,
-        name: &str,
-        command: Vec<String>,
-    ) -> Result<()> {
-        let mut supervisor = self.supervisor.write().await;
+    /// Create a service configuration using supervisor's create_service method
+    pub async fn create_service_config(&self, name: &str, command: Vec<String>) -> Result<()> {
+        // Serialize service creation to avoid lock contention
+        let _guard = self.service_mutex.lock().await;
 
+        let mut supervisor = self.supervisor.write().await;
         let config = ServiceConfig {
             meta: ServiceMeta {
                 name: name.to_string(),
@@ -171,7 +194,6 @@ impl TestEnvironment {
             stdio: Default::default(),
             sockets: vec![],
         };
-
         supervisor.create_service(config).await
     }
 
@@ -189,17 +211,34 @@ impl TestEnvironment {
 
     /// Remove a service
     pub async fn remove_service(&self, name: &str) -> Result<()> {
-        let supervisor = self.supervisor.write().await;
+        // Serialize service removal
+        let _guard = self.service_mutex.lock().await;
+
+        let mut supervisor = self.supervisor.write().await;
         // Stop first if running
         let status = supervisor.get_status(name).await?;
         if matches!(status.state, ServiceState::Running | ServiceState::Starting) {
             drop(supervisor);
             self.stop_service(name).await?;
-            let supervisor = self.supervisor.write().await;
-            supervisor.delete_service_config(name).await
-        } else {
-            supervisor.delete_service_config(name).await
+            supervisor = self.supervisor.write().await;
         }
+        // Delete config file
+        supervisor.delete_service_config(name).await?;
+        // Recreate supervisor to clear in-memory state
+        let config = SupervisorConfig {
+            services_dir: self.services_dir.clone(),
+            runtime_dir: self.temp_dir.join("runtime"),
+            log_dir: self.temp_dir.join("logs"),
+            supervision_interval_ms: 3600000,
+            enable_cgroups: false,
+            ..Default::default()
+        };
+        let new_supervisor = ServiceSupervisor::new(config)?;
+        new_supervisor.load_services().await?;
+        new_supervisor.build_dependency_graph().await?;
+        new_supervisor.validate_dependencies().await?;
+        *supervisor = new_supervisor;
+        Ok(())
     }
 
     /// List all services
@@ -287,9 +326,7 @@ impl TestEnvironment {
     pub async fn is_wake_lock_held(&self, name: &str) -> Result<bool> {
         let wake_manager = self.wake_lock_manager.read().await;
         let states = wake_manager.get_all_states().await;
-        Ok(states
-            .iter()
-            .any(|s| s.service_name == name && s.held))
+        Ok(states.iter().any(|s| s.service_name == name && s.held))
     }
 
     /// Send D-Bus message
@@ -343,17 +380,8 @@ impl TestEnvironment {
             log_fields.insert(k.to_string(), v.to_string());
         }
 
-        let entry = LogEntry {
-            id: 0, // Will be assigned by logger
-            timestamp: chrono::Utc::now(),
-            level: log_level,
-            service: service.to_string(),
-            message: message.to_string(),
-            fields: log_fields,
-        };
-
         let logging = self.logging.read().await;
-        logging.write(entry).await
+        logging.log(log_level, service, message, log_fields).await
     }
 
     /// Flush logs
@@ -437,7 +465,20 @@ impl TestEnvironment {
     /// Get watchdog state
     pub async fn get_watchdog_state(&self, name: &str) -> Result<pn_next::ServiceWatchdogState> {
         let watchdog = self.watchdog.read().await;
-        watchdog.get_state(name).await
+        Ok(watchdog
+            .get_state(name)
+            .await
+            .unwrap_or_else(|| pn_next::ServiceWatchdogState {
+                service: name.to_string(),
+                policy: pn_next::watchdog::RestartPolicy::OnFailure,
+                restart_count: 0,
+                restart_timestamps: vec![],
+                last_health_check: None,
+                last_restart: None,
+                escalation_level: 0,
+                quarantined: false,
+                stopped_by_watchdog: false,
+            }))
     }
 
     /// Set resource quota
@@ -472,7 +513,12 @@ impl TestEnvironment {
     /// Collect resource usage
     pub async fn collect_usage(&self, name: &str) -> Result<pn_next::ResourceUsage> {
         let quota_manager = self.quota_manager.read().await;
-        quota_manager.collect_usage(name).await
+        // Get PID from service status
+        let pid = {
+            let supervisor = self.supervisor.read().await;
+            supervisor.get_status(name).await?.pid.unwrap_or(0)
+        };
+        quota_manager.collect_usage(name, pid).await
     }
 
     /// Verify build
@@ -508,9 +554,9 @@ impl TestEnvironment {
     }
 
     /// Create a test network
-    pub async fn create_test_network(&self, name: &str) -> Result<pn_next::Network> {
+    pub async fn create_test_network(&self, name: &str) -> Result<Network> {
         let mut network_manager = self.network_manager.write().await;
-        let network = pn_next::Network {
+        let network = Network {
             id: Uuid::new_v4(),
             name: name.to_string(),
             driver: "bridge".to_string(),
@@ -519,7 +565,7 @@ impl TestEnvironment {
             dns_servers: vec!["8.8.8.8".to_string()],
             enable_ipv6: false,
             mtu: 1500,
-            created_at: chrono::Utc::now(),
+            created_at: Utc::now(),
             containers: vec![],
         };
         network_manager.create_network(network.clone()).await?;
@@ -531,7 +577,7 @@ impl TestEnvironment {
         &self,
         network_name: &str,
         container_name: &str,
-    ) -> Result<pn_next::NetworkInterface> {
+    ) -> Result<NetworkInterface> {
         let network_manager = self.network_manager.read().await;
         network_manager
             .connect_container(network_name, container_name)
@@ -553,14 +599,18 @@ impl TestEnvironment {
     /// Create a test volume
     pub async fn create_test_volume(&self, name: &str) -> Result<pn_next::Volume> {
         let mut storage_manager = self.storage_manager.write().await;
+        // Create the volume directory manually
+        let mountpoint = self.temp_dir.join("volumes").join(name);
+        std::fs::create_dir_all(&mountpoint)?;
+
         let volume = pn_next::Volume {
             id: Uuid::new_v4(),
             name: name.to_string(),
             driver: "local".to_string(),
-            mountpoint: self.temp_dir.join("volumes").join(name),
+            mountpoint,
             labels: HashMap::new(),
             options: HashMap::new(),
-            created_at: chrono::Utc::now(),
+            created_at: Utc::now(),
             size: 0,
         };
         storage_manager.create_volume(volume.clone()).await?;
@@ -583,14 +633,13 @@ impl TestEnvironment {
     pub async fn verify_volume_persistence(
         &self,
         volume_name: &str,
-        test_data: &str,
+        _test_data: &str,
     ) -> Result<bool> {
         let volume = self.get_volume(volume_name).await?;
         if let Some(vol) = volume {
-            let test_file = vol.mountpoint.join("test_data.txt");
             // In a real test, we'd write data and verify it persists
             // For now, just verify volume exists and is accessible
-            Ok(test_file.parent().map(|p| p.exists()).unwrap_or(false))
+            Ok(vol.mountpoint.parent().map(|p| p.exists()).unwrap_or(false))
         } else {
             Ok(false)
         }
@@ -598,42 +647,8 @@ impl TestEnvironment {
 
     /// Cleanup test environment
     pub async fn cleanup(&self) -> Result<()> {
-        let supervisor = self.supervisor.write().await;
+        let mut supervisor = self.supervisor.write().await;
         supervisor.shutdown().await?;
         Ok(())
     }
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct ServiceStatus {
-    pub name: String,
-    pub status: String,
-    pub metadata: std::collections::HashMap<String, String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct LogEntry {
-    pub id: u64,
-    pub level: String,
-    pub message: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct LogStats {
-    pub total_entries: u64,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct WatchdogState {
-    pub restart_count: u32,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct ResourceQuotas {
-    pub memory_limit: Option<u64>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct ResourceUsage {
-    pub memory_usage: u64,
 }

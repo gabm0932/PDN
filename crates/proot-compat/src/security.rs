@@ -378,7 +378,7 @@ impl SecurityHardeningManager {
     }
 
     /// Apply read-only rootfs
-    async fn apply_read_only_rootfs(&self, container_rootfs: &Path) -> Result<()> {
+    async fn apply_read_only_rootfs(&self, _container_rootfs: &Path) -> Result<()> {
         // Mount rootfs as read-only
         // nix::mount::mount(
         //     Some("none"),

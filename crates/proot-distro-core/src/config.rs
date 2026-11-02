@@ -2,7 +2,6 @@
 
 use crate::container::{ContainerConfig as ContainerContainerConfig, ContainerConfig};
 use crate::image::ImageSource;
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;

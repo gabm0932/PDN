@@ -2,10 +2,8 @@
 
 use super::config::{GuardrailAction, GuardrailConfig, GuardrailRule, Severity};
 use anyhow::Result;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 /// Guardrail manager for enforcing safety rules
@@ -88,8 +86,8 @@ impl GuardrailManager {
 
     pub async fn check_condition(
         &self,
-        condition: &str,
-        context: &HashMap<String, serde_json::Value>,
+        _condition: &str,
+        _context: &HashMap<String, serde_json::Value>,
     ) -> Result<bool> {
         // Simple condition evaluation (in production, use a proper expression parser)
         // This is a simplified implementation
@@ -359,7 +357,7 @@ impl RuleEvaluator for PrivilegedAccessEvaluator {
 struct NetworkUsageEvaluator;
 
 impl RuleEvaluator for NetworkUsageEvaluator {
-    fn evaluate(&self, condition: &str) -> Result<EvaluationResult> {
+    fn evaluate(&self, _condition: &str) -> Result<EvaluationResult> {
         // Simplified implementation
         Ok(EvaluationResult {
             triggered: false,
@@ -372,7 +370,7 @@ impl RuleEvaluator for NetworkUsageEvaluator {
 struct ContainerLifetimeEvaluator;
 
 impl RuleEvaluator for ContainerLifetimeEvaluator {
-    fn evaluate(&self, condition: &str) -> Result<EvaluationResult> {
+    fn evaluate(&self, _condition: &str) -> Result<EvaluationResult> {
         // Simplified implementation
         Ok(EvaluationResult {
             triggered: false,

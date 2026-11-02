@@ -3,16 +3,14 @@
 //! Provides signature verification using cosign, notary, and simple verification.
 //! Supports keyless signing, keypair signing, and notary v1/v2.
 
-use ::pem;
 use anyhow::{bail, Context, Result};
 use base64;
-use hmac::{Hmac, Mac};
-use ring::rand::SystemRandom;
+use hmac::Mac;
 use ring::signature::{KeyPair, UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use x509_parser::prelude::*;
 
 /// Signature verification configuration
@@ -232,14 +230,14 @@ impl SignatureVerifier {
     async fn verify_notary_v1_signature(
         &self,
         image_path: &Path,
-        signature: &ImageSignature,
+        _signature: &ImageSignature,
     ) -> Result<VerificationResult> {
         // Notary v1 uses a different format
         // This is a simplified implementation
         let image_data = std::fs::read(image_path)?;
         let mut hasher = Sha256::new();
         hasher.update(&image_data);
-        let digest = format!("{:x}", hasher.finalize());
+        let _digest = format!("{:x}", hasher.finalize());
 
         // In a real implementation, this would verify against Notary v1 server
         // and validate the signature using the notary client library
@@ -257,8 +255,8 @@ impl SignatureVerifier {
     /// Verify Notary v2 signature
     async fn verify_notary_v2_signature(
         &self,
-        image_path: &Path,
-        signature: &ImageSignature,
+        _image_path: &Path,
+        _signature: &ImageSignature,
     ) -> Result<VerificationResult> {
         // Notary v2 uses the same format as cosign but with different trust model
         // This would use the notary v2 client library

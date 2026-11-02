@@ -162,8 +162,6 @@ impl CapSysAdminManager {
 
     /// Test if we can perform mount operations
     fn test_mount_capability(&self) -> bool {
-        use std::os::unix::fs::MetadataExt;
-
         // First check if we're root
         if unsafe { libc::geteuid() } == 0 {
             return true;

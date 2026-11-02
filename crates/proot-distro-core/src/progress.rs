@@ -1,10 +1,7 @@
 //! Progress tracking for PRoot Distro
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 /// Progress tracker
 pub struct ProgressTracker {
@@ -137,7 +134,7 @@ impl ProgressBar {
         let percent = (self.current as f64 / self.total as f64 * 100.0) as u32;
 
         print!("\r{} [{}] {}%", self.prefix, bar, percent);
-        use std::io::{self, Write};
+        use std::io::Write;
         std::io::stdout().flush().ok();
     }
 }

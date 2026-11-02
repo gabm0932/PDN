@@ -6,6 +6,8 @@
 
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
+use futures::future::poll_fn;
+use futures::Future;
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use petgraph::algo::toposort;
@@ -16,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -890,16 +893,35 @@ impl ServiceSupervisor {
         let state = self.state.clone();
         let services = self.services.clone();
         let dependency_graph = self.dependency_graph.clone();
+        let supervision_shutdown_tx = self.supervision_shutdown_tx.clone();
+
+        // Create shutdown channel for this supervision loop
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        {
+            let mut guard = supervision_shutdown_tx.lock().await;
+            *guard = Some(shutdown_tx);
+        }
 
         tokio::spawn(async move {
             let mut ticker =
                 tokio::time::interval(Duration::from_millis(config.supervision_interval_ms));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+            eprintln!(
+                "DEBUG: Supervision loop started, interval={}ms",
+                config.supervision_interval_ms
+            );
+
+            // Create a future that polls the shutdown receiver
+            let mut shutdown_fut =
+                futures::future::poll_fn(move |cx| Pin::new(&mut shutdown_rx).poll(cx));
+
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
+                        eprintln!("DEBUG: Supervision loop tick");
                         if *state.read().await == SupervisorState::ShuttingDown {
+                            eprintln!("DEBUG: Supervision loop shutting down");
                             break;
                         }
                         // Run supervision tick
@@ -921,6 +943,82 @@ impl ServiceSupervisor {
                             // Check service health
                             let mut services_guard = services.write().await;
                             if let Some(managed) = services_guard.get_mut(&name) {
+                                eprintln!("DEBUG supervision_loop: name={}, state={:?}, process={:?}", name, managed.status.state, managed.process.is_some());
+                                // Handle services that should be running but have no process (e.g., Restarting/Starting state)
+                                if managed.process.is_none() && matches!(managed.status.state, ServiceState::Restarting | ServiceState::Starting) {
+                                    // Only restart if this is a genuine restart (has been restarted before) or explicitly marked for restart
+                                    // Skip initial startup - services in Starting state with no restarts yet are just starting for the first time
+                                    let is_initial_start = managed.status.state == ServiceState::Starting && managed.status.total_restarts == 0 && managed.status.last_restart_at.is_none();
+                                    if is_initial_start {
+                                        // This is initial startup, let the normal start process handle it
+                                        continue;
+                                    }
+                                    eprintln!("DEBUG supervision_loop: Restarting service {} (state={:?})", name, managed.status.state);
+                                    // Clone necessary data before releasing lock
+                                    let service_config = config.clone();
+                                    let event_tx_clone = event_tx.clone();
+                                    let name_clone = name.clone();
+                                    let services_for_start = services.clone();
+                                    // Release lock before spawning task
+                                    drop(services_guard);
+                                    tokio::spawn(async move {
+                                        // Build command
+                                        let mut cmd = Command::new(&service_config.process.command[0]);
+                                        if service_config.process.command.len() > 1 {
+                                            cmd.args(&service_config.process.command[1..]);
+                                        }
+                                        cmd.args(&service_config.process.args);
+
+                                        // Set environment
+                                        for (k, v) in &service_config.env {
+                                            cmd.env(k, v);
+                                        }
+
+                                        // Set working directory
+                                        let cwd = service_config
+                                            .working_dir
+                                            .clone()
+                                            .or_else(|| service_config.process.cwd.clone());
+                                        if let Some(cwd) = &cwd {
+                                            cmd.current_dir(cwd);
+                                        }
+
+                                        // Spawn process
+                                        match cmd.spawn() {
+                                            Ok(mut child) => {
+                                                let pid = child.id().expect("Process ID should be available");
+                                                let mut services = services_for_start.write().await;
+                                                if let Some(managed) = services.get_mut(&name_clone) {
+                                                    managed.process = Some(child);
+                                                    managed.status.pid = Some(pid);
+                                                    managed.status.state = ServiceState::Running;
+                                                    managed.status.state_changed_at = Utc::now();
+                                                    // Increment restart counters
+                                                    managed.status.restart_count += 1;
+                                                    managed.status.total_restarts += 1;
+                                                    managed.status.last_restart_at = Some(Utc::now());
+                                                }
+                                                let _ = event_tx_clone.send(SupervisorEvent::ServiceStarted {
+                                                    name: name_clone,
+                                                    pid,
+                                                });
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to start service {}: {}", name_clone, e);
+                                                let mut services = services_for_start.write().await;
+                                                if let Some(managed) = services.get_mut(&name_clone) {
+                                                    managed.status.state = ServiceState::Failed;
+                                                    managed.status.state_changed_at = Utc::now();
+                                                }
+                                                let _ = event_tx_clone.send(SupervisorEvent::ServiceFailed {
+                                                    name: name_clone,
+                                                    error: e.to_string(),
+                                                });
+                                            }
+                                        }
+                                    });
+                                    continue;
+                                }
                                 if let Some(ref mut child) = managed.process {
                                     match child.try_wait() {
                                         Ok(Some(status)) => {
@@ -940,7 +1038,115 @@ impl ServiceSupervisor {
 
                                             // Handle restart policy
                                             if Self::should_restart_static(&managed.status, &config.restart, managed.user_stopped, &managed.circuit_breaker) {
-                                                // Schedule restart would go here
+                                                // Schedule the restart - clone services for the inner closure
+                                                let name_clone = name.clone();
+                                                let config_clone = config.clone();
+                                                let event_tx_clone = event_tx.clone();
+                                                let services_for_restart = services.clone();
+                                                let config_for_restart = config.clone();
+                                                let event_tx_for_restart = event_tx.clone();
+                                                tokio::spawn(async move {
+                                                    // Inline the schedule_restart logic here to avoid Clone issues
+                                                    let circuit_open = {
+                                                        let services = services_for_restart.read().await;
+                                                        if let Some(managed) = services.get(&name_clone) {
+                                                            let mut cb = managed.circuit_breaker.clone();
+                                                            let window_secs = config_clone.restart.restart_window_secs;
+                                                            let max_failures = config_clone.restart.max_restarts;
+                                                            let opened = cb.record_failure(max_failures, window_secs);
+                                                            if opened {
+                                                                error!("Circuit breaker opened for service {}", name_clone);
+                                                            }
+                                                            !cb.allows_operation()
+                                                        } else {
+                                                            false
+                                                        }
+                                                    };
+
+                                                    if circuit_open {
+                                                        error!("Circuit breaker open for service {}, skipping restart", name_clone);
+                                                        let mut services = services_for_restart.write().await;
+                                                        if let Some(managed) = services.get_mut(&name_clone) {
+                                                            managed.status.state = ServiceState::Failed;
+                                                        }
+                                                        let _ = event_tx_clone.send(SupervisorEvent::ServiceFailed {
+                                                            name: name_clone.clone(),
+                                                            error: "Circuit breaker open - too many failures".to_string(),
+                                                        });
+                                                        return;
+                                                    }
+
+                                                    let now = Utc::now();
+                                                    let window_start = now - chrono::Duration::seconds(config_clone.restart.restart_window_secs as i64);
+
+                                                    let recent_restarts = {
+                                                        let services = services_for_restart.read().await;
+                                                        if let Some(managed) = services.get(&name_clone) {
+                                                            if managed
+                                                                .status
+                                                                .last_restart_at
+                                                                .map_or(false, |t| t > window_start)
+                                                            {
+                                                                managed.status.restart_count + 1
+                                                            } else {
+                                                                1
+                                                            }
+                                                        } else {
+                                                            1
+                                                        }
+                                                    };
+
+                                                    if recent_restarts > config_clone.restart.max_restarts {
+                                                        error!(
+                                                            "Service {} exceeded max restarts ({}) in window",
+                                                            name_clone, config_clone.restart.max_restarts
+                                                        );
+                                                        let mut services = services_for_restart.write().await;
+                                                        if let Some(managed) = services.get_mut(&name_clone) {
+                                                            managed.status.state = ServiceState::Failed;
+                                                        }
+                                                        let _ = event_tx_clone.send(SupervisorEvent::ServiceFailed {
+                                                            name: name_clone.clone(),
+                                                            error: format!(
+                                                                "Exceeded max restarts ({}) in {}s window",
+                                                                config_clone.restart.max_restarts, config_clone.restart.restart_window_secs
+                                                            ),
+                                                        });
+                                                        return;
+                                                    }
+
+                                                    let delay = std::cmp::min(
+                                                        (config_clone.restart.base_delay_secs as f64
+                                                            * config_clone
+                                                                .restart
+                                                                .backoff_multiplier
+                                                                .powi(recent_restarts as i32)) as u64,
+                                                        config_clone.restart.max_delay_secs,
+                                                    );
+
+                                                    {
+                                                        let mut services = services_for_restart.write().await;
+                                                        if let Some(managed) = services.get_mut(&name_clone) {
+                                                            managed.status.restart_count = recent_restarts;
+                                                            managed.status.total_restarts += 1;
+                                                            managed.status.last_restart_at = Some(Utc::now());
+                                                            managed.status.state = ServiceState::Restarting;
+                                                            managed.status.state_changed_at = Utc::now();
+                                                        }
+                                                    }
+
+                                                    let _ = event_tx_clone.send(SupervisorEvent::ServiceRestarting {
+                                                        name: name_clone.clone(),
+                                                        attempt: recent_restarts,
+                                                    });
+
+                                                    tokio::time::sleep(Duration::from_secs(delay)).await;
+
+                                                    // Actually restart by calling the instance method
+                                                    // Note: We can't call self.start_service here since we don't have self
+                                                    // The restart will be picked up by the next supervision tick
+                                                    // when it sees the service in Restarting state
+                                                });
                                             }
                                         }
                                         Ok(None) => {
@@ -954,12 +1160,15 @@ impl ServiceSupervisor {
                             }
                         }
                     }
+                    _ = &mut shutdown_fut => {
+                        eprintln!("DEBUG: Supervision loop received shutdown signal");
+                        break;
+                    }
                 }
             }
         });
         Ok(())
     }
-
     /// Determine if service should be restarted (static version for use in supervision loop)
     fn should_restart_static(
         status: &ServiceStatus,
@@ -976,7 +1185,12 @@ impl ServiceSupervisor {
             RestartCondition::Never => false,
             RestartCondition::Always => true,
             RestartCondition::OnFailure => status.exit_code.map_or(false, |c| c != 0),
-            RestartCondition::OnAbnormal => status.exit_code.map_or(false, |c| c < 0 || c > 128),
+            RestartCondition::OnAbnormal => {
+                // OnAbnormal restarts on:
+                // - Exit code < 0 or > 128 (some systems encode signals this way)
+                // - Exit code is None (process terminated by signal on Unix)
+                status.exit_code.map_or(true, |c| c < 0 || c > 128)
+            }
             RestartCondition::UnlessStopped => !user_stopped,
         }
     }
@@ -1018,6 +1232,29 @@ impl ServiceSupervisor {
         let mut services_guard = self.services.write().await;
 
         if let Some(managed) = services_guard.get_mut(&name) {
+            eprintln!(
+                "DEBUG check_service_health: name={}, state={:?}, process={:?}",
+                name,
+                managed.status.state,
+                managed.process.is_some()
+            );
+            // Handle services that should be running but have no process (e.g., Restarting/Starting state)
+            if managed.process.is_none()
+                && matches!(
+                    managed.status.state,
+                    ServiceState::Restarting | ServiceState::Starting
+                )
+            {
+                // Try to restart the service
+                eprintln!(
+                    "DEBUG: Restarting service {} (state={:?})",
+                    name, managed.status.state
+                );
+                drop(services_guard); // Release lock before calling start_service
+                self.start_service(&name).await?;
+                return Ok(());
+            }
+
             // Check if process is still alive
             if let Some(ref mut child) = managed.process {
                 match child.try_wait() {
@@ -1083,8 +1320,10 @@ impl ServiceSupervisor {
             RestartCondition::Always => true,
             RestartCondition::OnFailure => status.exit_code.map_or(false, |c| c != 0),
             RestartCondition::OnAbnormal => {
-                // Check if exited due to signal (negative exit code on Unix)
-                status.exit_code.map_or(false, |c| c < 0 || c > 128)
+                // OnAbnormal restarts on:
+                // - Exit code < 0 or > 128 (some systems encode signals this way)
+                // - Exit code is None (process terminated by signal on Unix)
+                status.exit_code.map_or(true, |c| c < 0 || c > 128)
             }
             RestartCondition::UnlessStopped => !user_stopped,
         }
@@ -1571,14 +1810,34 @@ impl ServiceSupervisor {
                 }
                 Err(_) => {
                     // Timeout - force kill
+                    eprintln!("DEBUG: timeout reached, force={}", force);
                     if force {
                         if let Some(pid) = child.id() {
+                            eprintln!("DEBUG: sending SIGKILL to pid {}", pid);
                             let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
                         }
-                        let _ = child.wait().await;
-                        error!("Force killed service {}", name);
+                        eprintln!(
+                            "DEBUG: force killing service {}, waiting for exit code",
+                            name
+                        );
+                        match child.wait().await {
+                            Ok(status) => {
+                                let code = status.code();
+                                eprintln!(
+                                    "DEBUG: force killed service {} exit code: {:?}",
+                                    name, code
+                                );
+                                code
+                            }
+                            Err(e) => {
+                                error!("Error waiting for force-killed service {}: {}", name, e);
+                                None
+                            }
+                        }
+                    } else {
+                        eprintln!("DEBUG: force=false, returning None");
+                        None
                     }
-                    None
                 }
             };
 
@@ -1590,7 +1849,40 @@ impl ServiceSupervisor {
                 managed.status.state_changed_at = Utc::now();
                 managed.status.pid = None;
                 // Mark as user-stopped to prevent UnlessStopped restart
-                managed.user_stopped = true;
+                // But don't mark as user_stopped if force kill and OnAbnormal policy (should restart)
+                let is_force_kill_on_abnormal = force
+                    && matches!(config.restart.condition, RestartCondition::OnAbnormal)
+                    && exit_code.map_or(true, |c| c < 0 || c > 128);
+                eprintln!("DEBUG stop_service: name={}, force={}, exit_code={:?}, is_force_kill_on_abnormal={}", name, force, exit_code, is_force_kill_on_abnormal);
+                managed.user_stopped = !is_force_kill_on_abnormal;
+
+                // If force kill on OnAbnormal, trigger restart
+                if is_force_kill_on_abnormal {
+                    eprintln!(
+                        "DEBUG: Triggering restart for force kill on OnAbnormal: {}",
+                        name
+                    );
+                    managed.status.state = ServiceState::Restarting;
+                    managed.status.state_changed_at = Utc::now();
+                    // Schedule restart
+                    let name_clone = name.to_string();
+                    let config_clone = config.clone();
+                    let event_tx_clone = self.event_tx.clone();
+                    let services_clone = self.services.clone();
+                    let config_clone = config.clone();
+                    let event_tx_clone = self.event_tx.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(config.restart.base_delay_secs))
+                            .await;
+                        let mut services = services_clone.write().await;
+                        if let Some(managed) = services.get_mut(&name_clone) {
+                            managed.status.state = ServiceState::Starting;
+                            managed.status.state_changed_at = Utc::now();
+                        }
+                        // The actual restart will be picked up by the next supervision tick
+                        // when it sees the service in Restarting/Starting state
+                    });
+                }
 
                 // Cleanup cgroup
                 if let Some(cgroup) = &managed.cgroup_path {
@@ -1669,15 +1961,20 @@ impl ServiceSupervisor {
         })
         .await;
 
+        // Signal supervision loop to stop
+        let shutdown_tx = {
+            let mut guard = self.supervision_shutdown_tx.lock().await;
+            guard.take()
+        };
+        if let Some(tx) = shutdown_tx {
+            let _ = tx.send(());
+        }
+
         // Stop all services in reverse dependency order
         let stop_order = self.get_stop_order().await?;
 
         for name in stop_order {
             let _ = self.stop_service(&name, true).await;
-        }
-
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
         }
 
         *self.state.write().await = SupervisorState::Stopped;
@@ -1794,6 +2091,17 @@ impl ServiceSupervisor {
                 .with_context(|| format!("Failed to delete service config: {:?}", path))?;
             info!("Deleted service config: {}", name);
         }
+
+        // Remove from memory
+        {
+            let mut services = self.services.write().await;
+            services.remove(name);
+        }
+
+        // Rebuild dependency graph
+        self.build_dependency_graph().await?;
+        self.validate_dependencies().await?;
+
         Ok(())
     }
 
@@ -1840,10 +2148,13 @@ impl ServiceSupervisor {
             user_stopped: false,
         };
 
-        let mut services = self.services.write().await;
-        services.insert(name.clone(), managed);
+        // Insert into memory (release lock before rebuilding dependency graph)
+        {
+            let mut services = self.services.write().await;
+            services.insert(name.clone(), managed);
+        }
 
-        // Rebuild dependency graph
+        // Rebuild dependency graph (without holding the services write lock)
         self.build_dependency_graph().await?;
         self.validate_dependencies().await?;
 
@@ -1865,13 +2176,15 @@ impl ServiceSupervisor {
         // Save to file
         self.save_service(name).await?;
 
-        // Update in memory
-        let mut services = self.services.write().await;
-        if let Some(managed) = services.get_mut(name) {
-            managed.config = config;
+        // Update in memory (release lock before rebuilding dependency graph)
+        {
+            let mut services = self.services.write().await;
+            if let Some(managed) = services.get_mut(name) {
+                managed.config = config;
+            }
         }
 
-        // Rebuild dependency graph
+        // Rebuild dependency graph (without holding the services write lock)
         self.build_dependency_graph().await?;
         self.validate_dependencies().await?;
 

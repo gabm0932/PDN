@@ -2,10 +2,8 @@
 
 use anyhow::Result;
 use memmap2::{Mmap, MmapMut, MmapOptions};
-use std::fs;
-use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Shared memory manager
 pub struct ShmManager {
@@ -191,8 +189,8 @@ impl ShmHandle {
         self.mapping.read(offset, buf)
     }
 
-    pub fn write(&self, offset: usize, data: &[u8]) -> Result<usize> {
-        let mut mapping = self.mapping.as_ref().clone();
+    pub fn write(&self, _offset: usize, _data: &[u8]) -> Result<usize> {
+        let _mapping = self.mapping.as_ref();
         // Note: This requires mutable access, but Arc only provides shared access
         // In a real implementation, we'd use a Mutex inside ShmMapping
         Ok(0)

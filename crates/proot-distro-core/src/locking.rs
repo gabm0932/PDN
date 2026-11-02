@@ -3,10 +3,8 @@
 use anyhow::Result;
 use std::fs;
 use std::os::unix::io::AsRawFd;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use uuid::Uuid;
 
 /// Lock manager for containers
 pub struct LockManager {
@@ -27,7 +25,7 @@ impl LockManager {
             .or_insert_with(|| Arc::new(Mutex::new(())));
 
         // Try to acquire lock with timeout
-        let mut guard = lock.try_lock();
+        let guard = lock.try_lock();
         if guard.is_err() {
             // Wait with timeout
             let start = std::time::Instant::now();
@@ -47,7 +45,7 @@ impl LockManager {
     }
 
     pub fn try_acquire(&mut self, name: &str, timeout: std::time::Duration) -> bool {
-        let lock = self
+        let _lock = self
             .locks
             .entry(name.to_string())
             .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())));
@@ -78,10 +76,7 @@ impl FileLock {
     }
 
     pub fn lock(&mut self) -> Result<()> {
-        use std::fs::OpenOptions;
-        use std::os::unix::fs::FileExt;
-
-        let file = std::fs::OpenOptions::new()
+        let _file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .open(&self.path)?;

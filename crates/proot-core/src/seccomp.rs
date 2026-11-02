@@ -1,8 +1,6 @@
 //! Seccomp filter for PRoot
 
 use anyhow::Result;
-use libc::{prctl, PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, SECCOMP_MODE_FILTER};
-use std::collections::HashMap;
 
 /// Seccomp filter for PRoot
 pub struct SeccompFilter {

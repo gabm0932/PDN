@@ -10,10 +10,8 @@ pub use proot_compat::{
 };
 
 // Additional proot-distro-core specific security types
-use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
 /// Extended security profile for proot-distro-core containers
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,7 +163,6 @@ impl DistroSecurityManager {
 }
 
 // Re-export additional types
-pub use proot_compat::security::*;
 
 #[cfg(test)]
 mod tests {
