@@ -182,6 +182,14 @@ pub enum ResourceType {
 }
 
 /// Resource quota manager
+/// Where service quotas live between commands.
+///
+/// Sits beside the other PDN runtime state so it is removed with the rest, and
+/// follows the same `~/.podnext/` convention the container store uses.
+fn quotas_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|home| home.join(".podnext").join("quotas.json"))
+}
+
 pub struct ResourceQuotaManager {
     config: ResourceQuotaConfig,
     usage_history: Arc<RwLock<HashMap<String, Vec<ResourceUsage>>>>,
@@ -229,11 +237,78 @@ impl ResourceQuotaManager {
             .unwrap_or_else(|| self.config.default_quotas.clone())
     }
 
-    /// Set quotas for a service
-    pub fn set_quotas(&mut self, service: &str, quotas: ResourceQuotas) {
+    /// Set quotas for a service, persisting the change.
+    ///
+    /// This used to write only into `config.service_quotas` in memory, and every
+    /// CLI invocation builds a fresh manager — so `quota set` was discarded when
+    /// the process exited and `quota get` always reported the defaults. A quota
+    /// that cannot survive one command is not a quota.
+    pub fn set_quotas(&mut self, service: &str, quotas: ResourceQuotas) -> Result<()> {
         self.config
             .service_quotas
             .insert(service.to_string(), quotas);
+        self.save_quotas()
+    }
+
+    /// The service's own stored quota, or an all-unset one.
+    ///
+    /// Distinct from `get_quotas`, which falls back to the configured defaults:
+    /// that is what you want when reporting the *effective* limit, but not when
+    /// updating one field, or the update would materialise every default and
+    /// wipe whatever the service already had.
+    pub fn stored_quotas(&self, service: &str) -> ResourceQuotas {
+        self.config
+            .service_quotas
+            .get(service)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Every configured service quota, for `quota list`.
+    ///
+    /// `config` is private and there was no accessor, so `quota list` could not
+    /// have shown anything even once quotas persisted.
+    pub fn all_quotas(&self) -> std::collections::HashMap<String, ResourceQuotas> {
+        self.config.service_quotas.clone()
+    }
+
+    /// Drop a service's quota and persist the removal.
+    pub fn remove_quotas(&mut self, service: &str) -> Result<()> {
+        self.config.service_quotas.remove(service);
+        self.save_quotas()
+    }
+
+    /// Load persisted service quotas, replacing whatever is in memory.
+    ///
+    /// A missing file is not an error: it just means nothing has been set yet.
+    pub fn load_quotas(&mut self) -> Result<()> {
+        let Some(path) = quotas_path() else {
+            return Ok(());
+        };
+        if !path.exists() {
+            return Ok(());
+        }
+
+        let raw = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading quota store {}", path.display()))?;
+        self.config.service_quotas = serde_json::from_str(&raw)
+            .with_context(|| format!("parsing quota store {}", path.display()))?;
+        Ok(())
+    }
+
+    /// Write the current service quotas to disk.
+    pub fn save_quotas(&self) -> Result<()> {
+        let Some(path) = quotas_path() else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let body = serde_json::to_string_pretty(&self.config.service_quotas)?;
+        std::fs::write(&path, body)
+            .with_context(|| format!("writing quota store {}", path.display()))?;
+        Ok(())
     }
 
     /// Update resource usage for a service

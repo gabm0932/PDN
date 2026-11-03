@@ -24,10 +24,14 @@ use pn_next::{
     DBusBrokerConfig,
     DaemonRuntime,
     DaemonRuntimeConfig,
+    EvaluationContext,
+    HealthStatus,
     LogLevel,
     LogQuery,
     PolicyEngine,
     PolicyEngineConfig,
+    PolicyHealthStatus,
+    PolicyResourceType,
     ResourceQuotaConfig,
     ResourceQuotaManager,
     ResourceQuotas,
@@ -276,13 +280,18 @@ async fn cmd_service_status(name: String, format: crate::OutputFormat) -> Result
 }
 
 async fn get_supervisor() -> Result<ServiceSupervisor> {
-    let services_dir = std::env::var("PN_NEXT_SERVICES_DIR").unwrap_or_else(|_| {
-        "/data/data/com.termux/files/home/.config/pn-next/services".to_string()
-    });
-    let runtime_dir = std::env::var("PN_NEXT_RUNTIME_DIR")
-        .unwrap_or_else(|_| "/data/data/com.termux/files/home/.local/run/pn-next".to_string());
-    let log_dir = std::env::var("PN_NEXT_LOG_DIR")
-        .unwrap_or_else(|_| "/data/data/com.termux/files/home/.local/log/pn-next".to_string());
+    // Derived from the home directory rather than a hardcoded Termux path, so the
+    // supervisor also works when PDN is run from a different prefix.
+    let home = dirs::home_dir().unwrap_or_default();
+    let env_or = |key: &str, fallback: std::path::PathBuf| {
+        std::env::var(key).unwrap_or_else(|_| fallback.to_string_lossy().into_owned())
+    };
+    let services_dir = env_or(
+        "PN_NEXT_SERVICES_DIR",
+        home.join(".config/pn-next/services"),
+    );
+    let runtime_dir = env_or("PN_NEXT_RUNTIME_DIR", home.join(".local/run/pn-next"));
+    let log_dir = env_or("PN_NEXT_LOG_DIR", home.join(".local/log/pn-next"));
 
     let supervisor = SupervisorBuilder::new()
         .services_dir(services_dir)
@@ -787,74 +796,48 @@ async fn cmd_quota_set(
     let limit_bytes = parse_quota_limit(&limit, resource)?;
 
     let mut quota_manager = ResourceQuotaManager::new(ResourceQuotaConfig::default());
-    quota_manager.set_quotas(
-        &name,
-        ResourceQuotas {
-            cpu_quota: if matches!(resource, crate::ResourceTypeArg::Cpu) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            memory_limit: if matches!(resource, crate::ResourceTypeArg::Memory) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            memory_swap_limit: if matches!(resource, crate::ResourceTypeArg::MemorySwap) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            io_read_bps: if matches!(resource, crate::ResourceTypeArg::IoReadBps) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            io_write_bps: if matches!(resource, crate::ResourceTypeArg::IoWriteBps) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            io_read_iops: if matches!(resource, crate::ResourceTypeArg::IoReadIops) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            io_write_iops: if matches!(resource, crate::ResourceTypeArg::IoWriteIops) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            pids_max: if matches!(resource, crate::ResourceTypeArg::Pids) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            nofile_limit: if matches!(resource, crate::ResourceTypeArg::Nofile) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            network_bps: if matches!(resource, crate::ResourceTypeArg::Network) {
-                Some(limit_bytes)
-            } else {
-                None
-            },
-            ..Default::default()
-        },
-    );
+    // Load before mutating: setting one resource must not drop the service's
+    // other quotas on the floor.
+    quota_manager.load_quotas()?;
+    // Start from whatever the service already has and set only the requested
+    // field. Building a fresh ResourceQuotas here meant `quota set cpu` wiped
+    // the memory limit that had just been set, because every other field came
+    // out as None.
+    let mut quotas = quota_manager.stored_quotas(&name);
+    match resource {
+        crate::ResourceTypeArg::Cpu => quotas.cpu_quota = Some(limit_bytes),
+        crate::ResourceTypeArg::Memory => quotas.memory_limit = Some(limit_bytes),
+        crate::ResourceTypeArg::MemorySwap => quotas.memory_swap_limit = Some(limit_bytes),
+        crate::ResourceTypeArg::IoReadBps => quotas.io_read_bps = Some(limit_bytes),
+        crate::ResourceTypeArg::IoWriteBps => quotas.io_write_bps = Some(limit_bytes),
+        crate::ResourceTypeArg::IoReadIops => quotas.io_read_iops = Some(limit_bytes),
+        crate::ResourceTypeArg::IoWriteIops => quotas.io_write_iops = Some(limit_bytes),
+        crate::ResourceTypeArg::Pids => quotas.pids_max = Some(limit_bytes),
+        crate::ResourceTypeArg::Nofile => quotas.nofile_limit = Some(limit_bytes),
+        crate::ResourceTypeArg::Network => quotas.network_bps = Some(limit_bytes),
+    }
+    quota_manager.set_quotas(&name, quotas)?;
 
+    let shown = if matches!(resource, crate::ResourceTypeArg::Cpu) {
+        format!("{} (hundredths of a core)", limit_bytes)
+    } else if matches!(
+        resource,
+        crate::ResourceTypeArg::Pids | crate::ResourceTypeArg::Nofile
+    ) {
+        limit_bytes.to_string()
+    } else {
+        format_size(limit_bytes)
+    };
     println!(
         "Resource quota set for '{}': {:?} = {}",
-        name,
-        resource,
-        format_size(limit_bytes)
+        name, resource, shown
     );
     Ok(())
 }
 
 async fn cmd_quota_get(name: String, format: crate::OutputFormat) -> Result<()> {
-    let quota_manager = ResourceQuotaManager::new(ResourceQuotaConfig::default());
+    let mut quota_manager = ResourceQuotaManager::new(ResourceQuotaConfig::default());
+    quota_manager.load_quotas()?;
     let quotas = quota_manager.get_quotas(&name);
 
     #[derive(Tabled, Serialize)]
@@ -937,14 +920,123 @@ async fn cmd_quota_get(name: String, format: crate::OutputFormat) -> Result<()> 
     Ok(())
 }
 
+/// Live usage for one service, next to the limit configured for it.
+///
+/// `collect_usage` was already real; the only thing missing was a pid, which
+/// only the supervisor knows.
 async fn cmd_quota_usage(name: String, _format: crate::OutputFormat) -> Result<()> {
-    println!("Resource usage for '{}':", name);
-    println!("(Usage collection not yet implemented)");
+    let supervisor = get_supervisor().await?;
+    let status = supervisor.get_status(&name).await?;
+
+    let mut quota_manager = ResourceQuotaManager::new(ResourceQuotaConfig::default());
+    quota_manager.load_quotas()?;
+    let quotas = quota_manager.get_quotas(&name);
+
+    // `ServiceStatus.resources` is the *supervisor's* snapshot type
+    // (cpu_percent/memory_bytes/pids), not this crate's ResourceUsage, so it
+    // cannot be substituted here. Live usage needs a live pid.
+    let Some(pid) = status.pid else {
+        anyhow::bail!(
+            "Service '{}' is not running (state: {:?}); live usage needs a pid",
+            name,
+            status.state
+        );
+    };
+    let usage = quota_manager.collect_usage(&name, pid).await?;
+
+    let show = |value: u64, limit: Option<u64>| match limit {
+        Some(l) => format!("{} / {}", value, l),
+        None => format!("{} (no limit)", value),
+    };
+
+    println!(
+        "Resource usage for '{}' (state: {:?}, pid: {:?})",
+        name, status.state, status.pid
+    );
+    // CPU values are hundredths of a core on both sides, so they compare directly.
+    println!(
+        "  CPU (100 = 1 core) : {}",
+        show(usage.cpu_usage, quotas.cpu_quota)
+    );
+    println!(
+        "  Memory             : {}",
+        show(usage.memory_usage, quotas.memory_limit)
+    );
+    println!(
+        "  Memory swap        : {}",
+        show(usage.memory_swap_usage, quotas.memory_swap_limit)
+    );
+    println!(
+        "  I/O read B/s       : {}",
+        show(usage.io_read_bps, quotas.io_read_bps)
+    );
+    println!(
+        "  I/O write B/s      : {}",
+        show(usage.io_write_bps, quotas.io_write_bps)
+    );
+    println!(
+        "  I/O read IOPS      : {}",
+        show(usage.io_read_iops, quotas.io_read_iops)
+    );
+    println!(
+        "  I/O write IOPS     : {}",
+        show(usage.io_write_iops, quotas.io_write_iops)
+    );
+    println!(
+        "  Processes          : {}",
+        show(usage.pids_count, quotas.pids_max)
+    );
+    println!(
+        "  Open file descr.   : {}",
+        show(usage.open_fds, quotas.nofile_limit)
+    );
+    println!(
+        "  Network RX B/s     : {}",
+        show(usage.network_rx_bps, quotas.network_bps)
+    );
+    println!(
+        "  Network TX B/s     : {}",
+        show(usage.network_tx_bps, quotas.network_bps)
+    );
     Ok(())
 }
 
 async fn cmd_quota_list(_format: crate::OutputFormat) -> Result<()> {
-    println!("All resource quotas:");
+    let mut quota_manager = ResourceQuotaManager::new(ResourceQuotaConfig::default());
+    quota_manager.load_quotas()?;
+    let all = quota_manager.all_quotas();
+
+    if all.is_empty() {
+        println!("No per-service quotas set. (Defaults still apply to every service.)");
+        return Ok(());
+    }
+
+    let mut names: Vec<&String> = all.keys().collect();
+    names.sort();
+
+    println!(
+        "{:<24} {:>10} {:>12} {:>12} {:>10}",
+        "SERVICE", "CPU", "MEMORY", "SWAP", "PIDS"
+    );
+    for name in names {
+        let q = &all[name];
+        println!(
+            "{:<24} {:>10} {:>12} {:>12} {:>10}",
+            name,
+            q.cpu_quota
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".into()),
+            q.memory_limit
+                .map(format_size)
+                .unwrap_or_else(|| "-".into()),
+            q.memory_swap_limit
+                .map(format_size)
+                .unwrap_or_else(|| "-".into()),
+            q.pids_max
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".into()),
+        );
+    }
     Ok(())
 }
 
@@ -1414,15 +1506,118 @@ pub async fn execute_policy_command(cmd: crate::PolicyCommands) -> Result<()> {
     }
 }
 
+/// Evaluate the configured policy rules against one service.
+///
+/// The engine itself was always real — a 190-line condition matcher. Two things
+/// were missing: `load_policies()` was never called, so `rules` was empty and
+/// every evaluation was a no-op whatever the user had configured; and nothing
+/// built an `EvaluationContext`, which needs live counters only the supervisor
+/// has.
 async fn cmd_policy_eval(name: String, _format: crate::OutputFormat) -> Result<()> {
-    let _engine = PolicyEngine::new(PolicyEngineConfig::default());
-    println!("Evaluating policies for '{}'...", name);
-    println!("(Policy evaluation not yet implemented)");
+    let config = PolicyEngineConfig::default();
+    let policy_dir = config.policy_dir.display().to_string();
+    let engine = PolicyEngine::new(config);
+
+    engine.load_policies().await?;
+    let rules = engine.get_rules().await;
+
+    if rules.is_empty() {
+        println!("No policy rules found in {}", policy_dir);
+        println!("Add .yaml/.yml/.toml rule files there, then re-run.");
+        return Ok(());
+    }
+
+    let supervisor = get_supervisor().await?;
+    let status = supervisor.get_status(&name).await?;
+
+    let mut resources = std::collections::HashMap::new();
+    match status.pid {
+        // A live process gives true per-second rates and descriptor counts.
+        Some(pid) => {
+            let usage = ResourceQuotaManager::new(ResourceQuotaConfig::default())
+                .collect_usage(&name, pid)
+                .await?;
+            // CPU is hundredths of a core on the usage side; policies talk percent.
+            resources.insert(
+                PolicyResourceType::CpuPercent,
+                usage.cpu_usage as f64 / 100.0,
+            );
+            resources.insert(PolicyResourceType::MemoryBytes, usage.memory_usage as f64);
+            resources.insert(PolicyResourceType::DiskReadBps, usage.io_read_bps as f64);
+            resources.insert(PolicyResourceType::DiskWriteBps, usage.io_write_bps as f64);
+            resources.insert(
+                PolicyResourceType::NetworkRxBps,
+                usage.network_rx_bps as f64,
+            );
+            resources.insert(
+                PolicyResourceType::NetworkTxBps,
+                usage.network_tx_bps as f64,
+            );
+            resources.insert(PolicyResourceType::PidsCount, usage.pids_count as f64);
+            resources.insert(PolicyResourceType::OpenFiles, usage.open_fds as f64);
+        }
+        // Stopped: only the supervisor's snapshot is available, and only the
+        // fields whose meaning carries over are usable. Read/write counters
+        // there are cumulative bytes, not rates, so they are left out rather
+        // than fed to a policy as if they were per-second.
+        None => {
+            if let Some(snapshot) = &status.resources {
+                resources.insert(PolicyResourceType::CpuPercent, snapshot.cpu_percent);
+                resources.insert(
+                    PolicyResourceType::MemoryBytes,
+                    snapshot.memory_bytes as f64,
+                );
+                resources.insert(PolicyResourceType::PidsCount, snapshot.pids as f64);
+            }
+        }
+    }
+
+    let uptime_secs = status
+        .started_at
+        .map(|started| (chrono::Utc::now() - started).num_seconds().max(0) as u64)
+        .unwrap_or(0);
+
+    let context = EvaluationContext {
+        service: name.clone(),
+        labels: Default::default(),
+        resources,
+        health: match status.health {
+            Some(HealthStatus::Healthy) => PolicyHealthStatus::Healthy,
+            Some(HealthStatus::Unhealthy) => PolicyHealthStatus::Unhealthy,
+            Some(HealthStatus::Starting) => PolicyHealthStatus::Starting,
+            _ => PolicyHealthStatus::Unknown,
+        },
+        restart_count: status.restart_count,
+        uptime_secs,
+        timestamp: chrono::Utc::now(),
+        attributes: Default::default(),
+    };
+
+    let result = engine.evaluate(&context).await;
+
+    println!(
+        "Policy evaluation for '{}' ({} rule(s) loaded)",
+        name,
+        rules.len()
+    );
+    println!("  state      : {:?} (pid {:?})", status.state, status.pid);
+    println!("  action     : {:?}", result.action);
+    println!("  reason     : {}", result.reason);
+    if result.matched_rules.is_empty() {
+        println!("  matched    : (no rule matched)");
+    } else {
+        println!("  matched    : {}", result.matched_rules.join(", "));
+    }
+    for effect in &result.effects {
+        println!("  effect     : {:?}", effect);
+    }
     Ok(())
 }
 
 async fn cmd_policy_list(tag: Option<String>, format: crate::OutputFormat) -> Result<()> {
     let engine = PolicyEngine::new(PolicyEngineConfig::default());
+    // Without this the rule set is always empty and `policy list` shows nothing.
+    engine.load_policies().await?;
     let rules = if let Some(tag) = tag {
         engine.list_rules_by_tag(&tag).await
     } else {
