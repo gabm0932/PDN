@@ -35,6 +35,22 @@ pub use path::PathTranslator;
 pub use ptrace::{PtraceController, PtraceEvent};
 pub use seccomp::SeccompFilter;
 pub use syscall::{SyscallConfig, SyscallHandler};
+/// A child process exited with a code the caller should exit with itself.
+///
+/// Returning this as `Err` loses the code: `fn main() -> Result<()>` prints the
+/// error and exits 1, so `podnext login c -- sh -c 'exit 7'` reported 1 for every
+/// non-zero code. `main` downcasts to this and exits with the real one.
+#[derive(Debug)]
+pub struct ChildExit(pub i32);
+
+impl std::fmt::Display for ChildExit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "child exited with code {}", self.0)
+    }
+}
+
+impl std::error::Error for ChildExit {}
+
 pub use tracee::{
     FdEntry, FdTable, MountInfo, PathInfo, RawSyscall, Registers, SyscallInfo, Tracee, TraceeId,
     TraceeState, VfsContext,

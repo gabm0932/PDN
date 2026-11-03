@@ -1252,7 +1252,20 @@ enum Shell {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    // Exits with the child's code when a command inside a container failed, so
+    // `podnext login c -- sh -c 'exit 7'` reports 7 like every other tool. The
+    // rest of the errors stay ordinary failures and exit 1.
+    if let Err(err) = run().await {
+        if let Some(exit) = err.downcast_ref::<proot_core::ChildExit>() {
+            std::process::exit(exit.0);
+        }
+        eprintln!("Error: {}", err);
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -1547,7 +1560,7 @@ async fn execute_direct(cli: &Cli, trailing_args: &[String]) -> Result<()> {
     // Execute and wait for completion
     let exit_code = engine.execute().await? as i32;
     if exit_code != 0 {
-        bail!("Command exited with code {}", exit_code);
+        return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
     }
 
     Ok(())
@@ -1573,7 +1586,7 @@ async fn execute_direct_manual(rootfs: String, cmd_args: &[String], verbose: boo
     // Execute and wait for completion
     let exit_code = engine.execute().await? as i32;
     if exit_code != 0 {
-        bail!("Command exited with code {}", exit_code);
+        return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
     }
 
     Ok(())

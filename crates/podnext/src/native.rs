@@ -506,7 +506,7 @@ pub async fn run_container_native(container_name: &str, command: Vec<String>) ->
 
     let exit_code = container_mgr.execute(container_name, command).await?;
     if exit_code != 0 {
-        bail!("Command exited with code {}", exit_code);
+        return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
     }
     Ok(())
 }

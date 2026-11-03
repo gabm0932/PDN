@@ -164,7 +164,9 @@ impl ProotDistroCore {
             .await?;
         pn_trace!("[DEBUG login] Exit code: {}", exit_code);
         if exit_code != 0 {
-            bail!("Login shell exited with code {}", exit_code);
+            // Return the code as a typed error so `main` can exit with it
+            // instead of collapsing every non-zero code to 1.
+            return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
         }
         Ok(())
     }
