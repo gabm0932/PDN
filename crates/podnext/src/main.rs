@@ -369,6 +369,29 @@ enum Commands {
         move_: bool,
     },
 
+    /// Reset a container to a clean install of the image it came from
+    ///
+    /// Deletes the container directory and reinstalls it. All data inside the
+    /// container is lost, as with proot-distro's `reset`.
+    Reset {
+        /// Container name
+        name: String,
+    },
+
+    /// Mirror files between host and containers
+    ///
+    /// Like `copy`, but only the differences move: a file is transferred when its
+    /// content differs, so a second run is a no-op. Paths are `[CONTAINER:]PATH`.
+    Sync {
+        /// `[CONTAINER:]SRC`
+        source: String,
+        /// `[CONTAINER:]DEST`
+        destination: String,
+        /// Remove destination entries that have no counterpart in the source
+        #[arg(short = 'd', long)]
+        delete: bool,
+    },
+
     /// Search images on Docker Hub
     Search {
         /// Search query
@@ -1607,6 +1630,12 @@ async fn execute_command(cmd: Commands) -> Result<()> {
             recursive,
             move_,
         } => cmd_copy(source, destination, recursive, move_).await,
+        Commands::Reset { name } => cmd_reset(name).await,
+        Commands::Sync {
+            source,
+            destination,
+            delete,
+        } => cmd_sync(source, destination, delete).await,
         Commands::Search {
             query,
             limit,
@@ -2715,6 +2744,236 @@ async fn cmd_copy(source: String, destination: String, recursive: bool, move_: b
     Ok(())
 }
 
+/// Reset a container: remove it and reinstall the image it came from.
+///
+/// This is destructive by definition — the same contract as proot-distro's
+/// `reset` — so it says so before doing it, and it refuses to guess an image it
+/// cannot prove the container came from.
+async fn cmd_reset(name: String) -> Result<()> {
+    let mgr = proot_distro_core::ContainerManager::new()?;
+    let container = mgr.get(&name).await?;
+
+    let container_dir = container
+        .rootfs_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("unexpected rootfs layout"))?
+        .to_path_buf();
+
+    let meta_path = container_dir.join("metadata.json");
+    let meta: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&meta_path)?)?;
+    let image = meta["image"].as_str().unwrap_or_default().to_string();
+    if image.is_empty() {
+        anyhow::bail!(
+            "Container '{}' has no recorded source image, so there is nothing to reinstall. \
+             Reinstall it manually.",
+            name
+        );
+    }
+    // A restored container records the *container* it came from as its image;
+    // that is not a registry reference and must not be sent to a registry.
+    let tag = meta["tag"].as_str().unwrap_or_default();
+    let image_ref = if tag.is_empty() || tag == "restored" {
+        image.clone()
+    } else {
+        format!("{}:{}", image, tag)
+    };
+
+    println!("Resetting '{}' from '{}'.", name, image_ref);
+    println!("This deletes the container and everything inside it.");
+
+    std::fs::remove_dir_all(&container_dir)?;
+    install_image_native(&image_ref, &name, false, None).await?;
+
+    println!("\nContainer '{}' reset to a clean {}", name, image_ref);
+    Ok(())
+}
+
+/// Counters for one sync run, so the command reports what it actually did.
+#[derive(Default)]
+struct SyncReport {
+    copied: usize,
+    unchanged: usize,
+    removed: usize,
+    skipped: usize,
+}
+
+/// Mirror `source` onto `destination`.
+///
+/// Comparison is by content (size first, then sha256), not by mtime: PDN has no
+/// dependency that can set a destination's mtime back, so an mtime comparison
+/// would report every file as changed on every run. Hashing costs more and is
+/// the only honest option here.
+async fn cmd_sync(source: String, destination: String, delete: bool) -> Result<()> {
+    let src = resolve_endpoint(&source).await?;
+    let dst = resolve_endpoint(&destination).await?;
+
+    let src_meta = std::fs::symlink_metadata(&src)
+        .map_err(|_| anyhow::anyhow!("Source '{}' does not exist", source))?;
+
+    // Without this, `--delete` against a file source silently does nothing,
+    // which is the bug the reference implementation documents avoiding.
+    if delete && !src_meta.is_dir() {
+        anyhow::bail!("--delete requires a directory as the source");
+    }
+
+    let mut report = SyncReport::default();
+
+    if src_meta.is_dir() {
+        mirror_dir(&src, &dst, &mut report)?;
+        if delete {
+            prune_extras(&src, &dst, &mut report)?;
+        }
+    } else {
+        sync_one(&src, &dst, &mut report)?;
+    }
+
+    println!(
+        "Synced {} -> {}: {} copied, {} unchanged, {} removed, {} skipped",
+        source, destination, report.copied, report.unchanged, report.removed, report.skipped
+    );
+    Ok(())
+}
+
+fn file_digest(path: &std::path::Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let mut file = std::fs::File::open(path)?;
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// True when the destination already holds this content.
+fn same_content(src: &std::path::Path, dst: &std::path::Path) -> Result<bool> {
+    let s = std::fs::symlink_metadata(src)?;
+    let Ok(d) = std::fs::symlink_metadata(dst) else {
+        return Ok(false);
+    };
+    if !d.is_file() || !s.is_file() {
+        return Ok(false);
+    }
+    if s.len() != d.len() {
+        return Ok(false);
+    }
+    Ok(file_digest(src)? == file_digest(dst)?)
+}
+
+/// Sync a single file, placing it inside `dst` when `dst` is a directory.
+fn sync_one(src: &std::path::Path, dst: &std::path::Path, report: &mut SyncReport) -> Result<()> {
+    let meta = std::fs::symlink_metadata(src)?;
+
+    let dst_is_dir = std::fs::symlink_metadata(dst)
+        .map(|m| m.is_dir())
+        .unwrap_or(false);
+    let target = if dst_is_dir {
+        let name = src
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("source has no file name"))?;
+        dst.join(name)
+    } else {
+        dst.to_path_buf()
+    };
+
+    if meta.file_type().is_symlink() {
+        let link = std::fs::read_link(src)?;
+        let already = std::fs::read_link(&target).ok().as_deref() == Some(link.as_path());
+        if already {
+            report.unchanged += 1;
+            return Ok(());
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let _ = std::fs::remove_file(&target);
+        std::os::unix::fs::symlink(&link, &target)?;
+        report.copied += 1;
+        return Ok(());
+    }
+
+    // A directory standing where the source has a file is replaced, never
+    // descended into: that link may lead somewhere unexpected.
+    if std::fs::symlink_metadata(&target)
+        .map(|m| m.is_dir())
+        .unwrap_or(false)
+    {
+        std::fs::remove_dir_all(&target)?;
+    }
+
+    if same_content(src, &target)? {
+        report.unchanged += 1;
+        return Ok(());
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(src, &target)?;
+    std::fs::set_permissions(&target, meta.permissions())?;
+    report.copied += 1;
+    Ok(())
+}
+
+/// Walk `src` and mirror every entry into `dst`. Ownership is never changed
+/// (an unprivileged Android process cannot), and modes are applied after the
+/// content so a read-only source directory stays writable while its children go
+/// in.
+fn mirror_dir(src: &std::path::Path, dst: &std::path::Path, report: &mut SyncReport) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            mirror_dir(&path, &target, report)?;
+        } else {
+            sync_one(&path, &target, report)?;
+        }
+    }
+
+    if let Ok(meta) = std::fs::metadata(src) {
+        let _ = std::fs::set_permissions(dst, meta.permissions());
+    }
+    Ok(())
+}
+
+/// Remove destination entries that have no counterpart in the source.
+///
+/// Only meaningful after a successful mirror pass; the caller guarantees the
+/// source directory was listable, or every destination entry would look like an
+/// orphan.
+fn prune_extras(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    report: &mut SyncReport,
+) -> Result<()> {
+    let Ok(entries) = std::fs::read_dir(dst) else {
+        return Ok(());
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let counterpart = src.join(entry.file_name());
+
+        if std::fs::symlink_metadata(&counterpart).is_err() {
+            if entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(&path)?;
+            } else {
+                std::fs::remove_file(&path)?;
+            }
+            report.removed += 1;
+            continue;
+        }
+
+        if entry.file_type()?.is_dir() {
+            prune_extras(&counterpart, &path, report)?;
+        }
+    }
+    Ok(())
+}
+
 /// Recursive copy that keeps symlinks as symlinks, so a copied tree does not
 /// silently balloon the way following every link would.
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
@@ -3008,6 +3267,87 @@ mod tests {
                 evil
             );
         }
+    }
+
+    fn tmp_tree(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pdn-sync-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn sync_transfers_only_what_differs() {
+        let root = tmp_tree("diff");
+        let src = root.join("src");
+        let dst = root.join("dst");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("a.txt"), "one").unwrap();
+        std::fs::write(src.join("sub/b.txt"), "two").unwrap();
+
+        let mut report = SyncReport::default();
+        mirror_dir(&src, &dst, &mut report).unwrap();
+        assert_eq!(report.copied, 2, "first pass copies everything");
+        assert_eq!(
+            std::fs::read_to_string(dst.join("sub/b.txt")).unwrap(),
+            "two"
+        );
+
+        // Second pass: nothing changed, nothing moves.
+        let mut second = SyncReport::default();
+        mirror_dir(&src, &dst, &mut second).unwrap();
+        assert_eq!(second.copied, 0);
+        assert_eq!(second.unchanged, 2);
+
+        // Change one file and only that one moves.
+        std::fs::write(src.join("a.txt"), "ONE!").unwrap();
+        let mut third = SyncReport::default();
+        mirror_dir(&src, &dst, &mut third).unwrap();
+        assert_eq!(third.copied, 1);
+        assert_eq!(third.unchanged, 1);
+        assert_eq!(std::fs::read_to_string(dst.join("a.txt")).unwrap(), "ONE!");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prune_removes_only_orphans() {
+        let root = tmp_tree("prune");
+        let src = root.join("src");
+        let dst = root.join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(dst.join("stale-dir")).unwrap();
+        std::fs::write(src.join("keep.txt"), "k").unwrap();
+        std::fs::write(dst.join("keep.txt"), "k").unwrap();
+        std::fs::write(dst.join("drop.txt"), "d").unwrap();
+        std::fs::write(dst.join("stale-dir/inner.txt"), "d").unwrap();
+
+        let mut report = SyncReport::default();
+        prune_extras(&src, &dst, &mut report).unwrap();
+
+        assert!(dst.join("keep.txt").exists(), "a live file must survive");
+        assert!(!dst.join("drop.txt").exists(), "an orphan must go");
+        assert!(
+            !dst.join("stale-dir").exists(),
+            "an orphan directory must go"
+        );
+        assert_eq!(report.removed, 2);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn same_content_compares_bytes_not_names() {
+        let root = tmp_tree("same");
+        std::fs::write(root.join("a"), "abcdef").unwrap();
+        std::fs::write(root.join("b"), "abcdef").unwrap();
+        std::fs::write(root.join("c"), "abcde").unwrap();
+
+        assert!(same_content(&root.join("a"), &root.join("b")).unwrap());
+        assert!(!same_content(&root.join("a"), &root.join("c")).unwrap());
+        assert!(!same_content(&root.join("a"), &root.join("missing")).unwrap());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
