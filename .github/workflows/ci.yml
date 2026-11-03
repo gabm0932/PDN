@@ -320,12 +320,11 @@ jobs:
       - name: Test podnext basic commands
         run: |
           ./target/release/podnext --version
-          ./target/release/podnext system info
-          ./target/release/podnext container list
-          ./target/release/podnext image list
-          ./target/release/podnext network list
-          ./target/release/podnext storage list
-          ./target/release/podnext volume list
+          ./target/release/podnext info
+          ./target/release/podnext list
+          ./target/release/podnext image ls
+          ./target/release/podnext network ls
+          ./target/release/podnext volume ls
 
       - name: Test PRoot compatibility layer
         run: |
