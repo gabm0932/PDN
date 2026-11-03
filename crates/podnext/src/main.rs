@@ -6,6 +6,18 @@
 #![allow(deprecated)]
 #![allow(future_incompatible)]
 
+/// Trace-only logging, off unless `PN_DEBUG` is set in the environment.
+///
+/// These lines were unconditional upstream and flooded real output — a single
+/// `backup create` emitted ~280 kB of DEBUG for one alpine container, burying
+/// the result. Enable with `PN_DEBUG=1` when diagnosing.
+macro_rules! pn_trace {
+    ($($arg:tt)*) => {
+        if ::std::env::var_os("PN_DEBUG").is_some() {
+            ::std::eprintln!($($arg)*);
+        }
+    };
+}
 use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -217,7 +229,7 @@ struct Cli {
     verbose: u8,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum Commands {
     // Container management (existing)
@@ -330,6 +342,31 @@ enum Commands {
         /// Force remove without confirmation
         #[arg(short = 'f', long)]
         force: bool,
+    },
+
+    /// Rename an installed container
+    Rename {
+        /// Current container name
+        oldname: String,
+        /// New container name
+        newname: String,
+    },
+
+    /// Copy or move files between host and containers
+    ///
+    /// Paths are `[CONTAINER:]PATH`; a path without a container prefix is the
+    /// host's.
+    Copy {
+        /// `[CONTAINER:]SRC`
+        source: String,
+        /// `[CONTAINER:]DEST`
+        destination: String,
+        /// Copy directories recursively (`-R`, since `-r` is the global --rootfs)
+        #[arg(short = 'R', long)]
+        recursive: bool,
+        /// Remove the source after a successful copy
+        #[arg(short = 'm', long = "move")]
+        move_: bool,
     },
 
     /// Search images on Docker Hub
@@ -455,7 +492,7 @@ enum Commands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum ImageCommands {
     /// Pull an image from a registry
@@ -519,7 +556,7 @@ enum ImageCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum NetworkCommands {
     /// Create a network
@@ -574,7 +611,7 @@ enum NetworkCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum VolumeCommands {
     /// Create a volume
@@ -618,7 +655,7 @@ enum VolumeCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum ServiceCommands {
     /// Start a service
@@ -689,7 +726,7 @@ enum ServiceCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum DaemonCommands {
     /// Start daemon
@@ -715,7 +752,7 @@ enum DaemonCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum WatchdogCommands {
     /// Show watchdog status
@@ -749,7 +786,7 @@ enum WatchdogCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum QuotaCommands {
     /// Set resource quota
@@ -786,7 +823,7 @@ enum QuotaCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum LogCommands {
     /// Query logs
@@ -829,7 +866,7 @@ enum LogCommands {
     Flush,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum DbusCommands {
     /// List D-Bus services
@@ -859,7 +896,7 @@ enum DbusCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum SocketCommands {
     /// Register socket activation
@@ -881,7 +918,7 @@ enum SocketCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum BootCommands {
     /// Enable auto-start at boot
@@ -902,7 +939,7 @@ enum BootCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum WakelockCommands {
     /// Acquire wake lock
@@ -926,7 +963,7 @@ enum WakelockCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum PolicyCommands {
     /// Evaluate policies for a service
@@ -957,7 +994,7 @@ enum PolicyCommands {
 }
 
 /// Backup/Restore management
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum BackupCommands {
     /// Create a backup
@@ -965,7 +1002,7 @@ enum BackupCommands {
         /// Container name or ID
         container: String,
         /// Backup type
-        #[arg(short, long, value_enum, default_value = "full")]
+        #[arg(short = 't', long, value_enum, default_value = "full")]
         backup_type: BackupTypeArg,
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
@@ -1013,7 +1050,7 @@ enum BackupTypeArg {
 }
 
 /// Multi-arch build service
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum BuildCommands {
     /// Submit a build
@@ -1063,7 +1100,7 @@ enum BuildCommands {
 }
 
 /// GitOps integration
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum GitopsCommands {
     /// Sync with git repository
@@ -1101,7 +1138,7 @@ enum GitopsCommands {
 }
 
 /// Web dashboard management
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum DashboardCommands {
     /// Start the dashboard server
@@ -1191,7 +1228,7 @@ async fn main() -> Result<()> {
     let raw_args: Vec<String> = std::env::args().collect();
     let pn_debug = std::env::var_os("PN_NEXT_DEBUG").is_some();
     if pn_debug {
-        eprintln!("[DEBUG main] Raw args: {:?}", raw_args);
+        pn_trace!("[DEBUG main] Raw args: {:?}", raw_args);
     }
 
     // Check if this is a direct execution mode (has -r or --rootfs anywhere)
@@ -1199,7 +1236,7 @@ async fn main() -> Result<()> {
 
     if is_direct_execution {
         if pn_debug {
-            eprintln!("[DEBUG main] Direct execution mode detected");
+            pn_trace!("[DEBUG main] Direct execution mode detected");
         }
 
         // Parse all flags manually for direct execution
@@ -1336,7 +1373,7 @@ async fn main() -> Result<()> {
         }
 
         if pn_debug {
-            eprintln!("[DEBUG main] Calling execute_direct_manual with all flags");
+            pn_trace!("[DEBUG main] Calling execute_direct_manual with all flags");
         }
         // For now, just call execute_direct_manual with basic args
         // TODO: Pass all parsed flags to a new execute_direct_manual_full function
@@ -1360,6 +1397,7 @@ async fn main() -> Result<()> {
 
     // Subcommand mode
     if let Some(cmd) = cli.command {
+        pn_trace!("DEBUG main: Executing command: {:?}", cmd);
         return execute_command(cmd).await;
     }
 
@@ -1372,24 +1410,24 @@ async fn execute_direct(cli: &Cli, trailing_args: &[String]) -> Result<()> {
         bail!("Direct execution mode requires a command. Use 'podnext -r /path/to/rootfs -- <command>'");
     }
 
-    eprintln!("[DEBUG direct] Rootfs: {:?}", cli.rootfs);
-    eprintln!("[DEBUG direct] Binds: {:?}", cli.bind);
-    eprintln!("[DEBUG direct] Working dir: {:?}", cli.pwd);
-    eprintln!("[DEBUG direct] QEMU: {:?}", cli.qemu);
-    eprintln!("[DEBUG direct] Link2symlink: {}", cli.link2symlink);
-    eprintln!("[DEBUG direct] No sysvipc: {}", cli.no_sysvipc);
-    eprintln!("[DEBUG direct] Sysvipc: {}", cli.sysvipc);
-    eprintln!("[DEBUG direct] Kernel: {:?}", cli.kernel);
-    eprintln!("[DEBUG direct] Hostname: {:?}", cli.hostname);
-    eprintln!("[DEBUG direct] UID: {:?}", cli.uid);
-    eprintln!("[DEBUG direct] GID: {:?}", cli.gid);
-    eprintln!("[DEBUG direct] Seccomp: {}", cli.seccomp);
-    eprintln!("[DEBUG direct] No seccomp: {}", cli.no_seccomp);
-    eprintln!("[DEBUG direct] Trace: {}", cli.trace);
-    eprintln!("[DEBUG direct] Kill on exit: {}", cli.kill_on_exit);
-    eprintln!("[DEBUG direct] No kill on exit: {}", cli.no_kill_on_exit);
-    eprintln!("[DEBUG direct] Env: {:?}", cli.env);
-    eprintln!("[DEBUG direct] Command: {:?}", trailing_args);
+    pn_trace!("[DEBUG direct] Rootfs: {:?}", cli.rootfs);
+    pn_trace!("[DEBUG direct] Binds: {:?}", cli.bind);
+    pn_trace!("[DEBUG direct] Working dir: {:?}", cli.pwd);
+    pn_trace!("[DEBUG direct] QEMU: {:?}", cli.qemu);
+    pn_trace!("[DEBUG direct] Link2symlink: {}", cli.link2symlink);
+    pn_trace!("[DEBUG direct] No sysvipc: {}", cli.no_sysvipc);
+    pn_trace!("[DEBUG direct] Sysvipc: {}", cli.sysvipc);
+    pn_trace!("[DEBUG direct] Kernel: {:?}", cli.kernel);
+    pn_trace!("[DEBUG direct] Hostname: {:?}", cli.hostname);
+    pn_trace!("[DEBUG direct] UID: {:?}", cli.uid);
+    pn_trace!("[DEBUG direct] GID: {:?}", cli.gid);
+    pn_trace!("[DEBUG direct] Seccomp: {}", cli.seccomp);
+    pn_trace!("[DEBUG direct] No seccomp: {}", cli.no_seccomp);
+    pn_trace!("[DEBUG direct] Trace: {}", cli.trace);
+    pn_trace!("[DEBUG direct] Kill on exit: {}", cli.kill_on_exit);
+    pn_trace!("[DEBUG direct] No kill on exit: {}", cli.no_kill_on_exit);
+    pn_trace!("[DEBUG direct] Env: {:?}", cli.env);
+    pn_trace!("[DEBUG direct] Command: {:?}", trailing_args);
 
     // Create a temporary container config for direct execution
     let rootfs_path = cli.rootfs.as_ref().unwrap();
@@ -1485,9 +1523,9 @@ async fn execute_direct_manual(rootfs: String, cmd_args: &[String], verbose: boo
         bail!("Direct execution mode requires a command. Use 'podnext -r /path/to/rootfs -- <command>'");
     }
 
-    eprintln!("[DEBUG direct] Rootfs: {:?}", rootfs);
-    eprintln!("[DEBUG direct] Command: {:?}", cmd_args);
-    eprintln!("[DEBUG direct] Verbose: {}", verbose);
+    pn_trace!("[DEBUG direct] Rootfs: {:?}", rootfs);
+    pn_trace!("[DEBUG direct] Command: {:?}", cmd_args);
+    pn_trace!("[DEBUG direct] Verbose: {}", verbose);
 
     // Use proot-core directly for direct execution
     let mut config = proot_core::ProotConfig::default();
@@ -1507,6 +1545,7 @@ async fn execute_direct_manual(rootfs: String, cmd_args: &[String], verbose: boo
 }
 
 async fn execute_command(cmd: Commands) -> Result<()> {
+    pn_trace!("DEBUG execute_command: START {:?}", cmd);
     match cmd {
         // Container commands
         Commands::Install { image, name, force } => cmd_install(image, name, force).await,
@@ -1561,6 +1600,13 @@ async fn execute_command(cmd: Commands) -> Result<()> {
         } => cmd_attach(container, user, command).await,
         Commands::Kill { container } => cmd_kill(container).await,
         Commands::Remove { name, force } => cmd_remove(name, force).await,
+        Commands::Rename { oldname, newname } => cmd_rename(oldname, newname).await,
+        Commands::Copy {
+            source,
+            destination,
+            recursive,
+            move_,
+        } => cmd_copy(source, destination, recursive, move_).await,
         Commands::Search {
             query,
             limit,
@@ -1848,7 +1894,7 @@ async fn cmd_remove(name: String, force: bool) -> Result<()> {
 
 async fn cmd_info(format: OutputFormat) -> Result<()> {
     let info = SystemInfo {
-        version: "0.1.0".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         platform: "Termux/Android".to_string(),
         rust_version: "1.80+".to_string(),
         backend: "proot-distro-core".to_string(),
@@ -1884,7 +1930,10 @@ async fn cmd_info(format: OutputFormat) -> Result<()> {
         OutputFormat::Table => output_table(&[row]),
         OutputFormat::Json => output_json(&serializable)?,
         OutputFormat::Yaml => output_yaml(&serializable)?,
-        OutputFormat::Text => println!("podnext 0.1.0 - PRoot Distro Next for Termux/Android"),
+        OutputFormat::Text => println!(
+            "podnext {} - PRoot Distro Next for Termux/Android",
+            env!("CARGO_PKG_VERSION")
+        ),
     }
     Ok(())
 }
@@ -2216,7 +2265,7 @@ async fn cmd_image_ls(format: OutputFormat, _all: bool) -> Result<()> {
 
 async fn cmd_version(format: OutputFormat) -> Result<()> {
     let version_info = VersionInfo {
-        version: "0.1.0".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         git_commit: option_env!("GIT_COMMIT").unwrap_or("unknown").to_string(),
         build_date: option_env!("BUILD_DATE").unwrap_or("unknown").to_string(),
         rust_version: "1.80+".to_string(),
@@ -2226,7 +2275,7 @@ async fn cmd_version(format: OutputFormat) -> Result<()> {
         OutputFormat::Table => output_table(&[version_info]),
         OutputFormat::Json => output_json(&version_info)?,
         OutputFormat::Yaml => output_yaml(&version_info)?,
-        OutputFormat::Text => println!("podnext 0.1.0"),
+        OutputFormat::Text => println!("podnext {}", env!("CARGO_PKG_VERSION")),
     }
     Ok(())
 }
@@ -2352,6 +2401,7 @@ async fn cmd_network_create(
         dns_servers: vec!["8.8.8.8".to_string(), "8.8.4.4".to_string()],
         enable_ipv6: false,
         mtu: None,
+        ..Default::default()
     };
     core.network_manager().create(&config)?;
     println!("Network '{}' created successfully", name);
@@ -2473,20 +2523,210 @@ async fn cmd_network_rm(networks: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_network_connect(network: String, container: String, ip: Option<String>) -> Result<()> {
-    eprintln!("Connecting container {} to network {}", container, network);
-    if let Some(ip) = ip {
-        eprintln!("IP: {}", ip);
+/// Rename a container: the directory name *is* the identity, so the move plus a
+/// rewritten `metadata.json` is the whole operation.
+async fn cmd_rename(oldname: String, newname: String) -> Result<()> {
+    if oldname == newname {
+        anyhow::bail!("Source and destination names are identical");
     }
-    Err(anyhow::anyhow!("Network connect not yet implemented"))
+    proot_distro_core::NameValidator::new().validate_container_name(&newname)?;
+
+    let mgr = proot_distro_core::ContainerManager::new()?;
+    let container = mgr.get(&oldname).await?;
+
+    let src_dir = container
+        .rootfs_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("unexpected rootfs layout"))?
+        .to_path_buf();
+    let containers_dir = src_dir
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("unexpected container layout"))?
+        .to_path_buf();
+    let dst_dir = containers_dir.join(&newname);
+
+    if dst_dir.exists() {
+        anyhow::bail!("Container '{}' already exists", newname);
+    }
+
+    std::fs::rename(&src_dir, &dst_dir)?;
+
+    // metadata.json embeds both the name and the rootfs path; a stale copy makes
+    // `list` disagree with the directory on disk.
+    let meta_path = dst_dir.join("metadata.json");
+    if let Ok(raw) = std::fs::read_to_string(&meta_path) {
+        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("name".into(), serde_json::json!(newname));
+                obj.insert(
+                    "rootfs".into(),
+                    serde_json::json!(dst_dir.join("rootfs").to_string_lossy()),
+                );
+            }
+            std::fs::write(&meta_path, serde_json::to_string_pretty(&value)?)?;
+        }
+    }
+
+    println!("Renamed container '{}' to '{}'", oldname, newname);
+    Ok(())
+}
+
+/// Split `[CONTAINER:]PATH`. A prefix is only a container when it has no path
+/// separator, so an absolute host path is never mistaken for one.
+fn split_spec(spec: &str) -> (Option<&str>, &str) {
+    match spec.split_once(':') {
+        Some((name, path)) if !name.is_empty() && !name.contains('/') => (Some(name), path),
+        _ => (None, spec),
+    }
+}
+
+/// Translate a `[CONTAINER:]PATH` spec to a host path.
+///
+/// The rootfs is a plain host directory, so a guest path is just the rootfs
+/// joined with the guest path — no protocol needed.
+async fn resolve_endpoint(spec: &str) -> Result<std::path::PathBuf> {
+    match split_spec(spec) {
+        (None, path) => Ok(std::path::PathBuf::from(path)),
+        (Some(name), path) => {
+            let mgr = proot_distro_core::ContainerManager::new()?;
+            let container = mgr.get(name).await?;
+            Ok(container.rootfs_path.join(path.trim_start_matches('/')))
+        }
+    }
+}
+
+async fn cmd_copy(source: String, destination: String, recursive: bool, move_: bool) -> Result<()> {
+    let dst = resolve_endpoint(&destination).await?;
+    let raw_src = resolve_endpoint(&source).await?;
+
+    // A plain copy follows the final symlink, exactly as `cp` does; `--move`
+    // acts on the link itself. Without this, copying a guest path that happens
+    // to be a link produces a dangling link on the host: Debian's
+    // /etc/os-release is `../usr/lib/os-release`, which stops meaning anything
+    // once it is outside the rootfs.
+    let src_is_link = std::fs::symlink_metadata(&raw_src)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    let src = if !move_ && src_is_link {
+        let link = std::fs::read_link(&raw_src)?;
+        if link.is_absolute() {
+            link
+        } else {
+            raw_src
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(link)
+        }
+    } else {
+        raw_src.clone()
+    };
+
+    let meta = std::fs::symlink_metadata(&src)
+        .map_err(|_| anyhow::anyhow!("Source '{}' does not exist", source))?;
+    let is_dir = meta.is_dir();
+    if !is_dir && !meta.file_type().is_file() && !meta.file_type().is_symlink() {
+        anyhow::bail!("Source '{}' is not a regular file or directory", source);
+    }
+    if is_dir && !recursive {
+        anyhow::bail!("Source '{}' is a directory; pass --recursive", source);
+    }
+
+    // Copying onto an existing directory places the source inside it, as cp does.
+    let dest = if dst.is_dir() {
+        let name = src
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("source has no file name"))?;
+        dst.join(name)
+    } else {
+        dst
+    };
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    if is_dir {
+        copy_dir_recursive(&src, &dest)?;
+    } else if meta.file_type().is_symlink() {
+        // Only reachable with --move: the leaf link is moved as a link.
+        let link = std::fs::read_link(&src)?;
+        let _ = std::fs::remove_file(&dest);
+        std::os::unix::fs::symlink(&link, &dest)?;
+    } else {
+        std::fs::copy(&src, &dest)?;
+    }
+
+    if move_ {
+        if is_dir {
+            std::fs::remove_dir_all(&src)?;
+        } else {
+            std::fs::remove_file(&src)?;
+        }
+        println!("Moved {} -> {}", source, destination);
+    } else {
+        println!("Copied {} -> {}", source, destination);
+    }
+    Ok(())
+}
+
+/// Recursive copy that keeps symlinks as symlinks, so a copied tree does not
+/// silently balloon the way following every link would.
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else if file_type.is_symlink() {
+            let link = std::fs::read_link(entry.path())?;
+            let _ = std::fs::remove_file(&target);
+            std::os::unix::fs::symlink(&link, &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_network_connect(network: String, container: String, ip: Option<String>) -> Result<()> {
+    // Resolve the container first: an unknown name must fail before any state
+    // is written, and we need its rootfs to apply the network's DNS.
+    let container_mgr = proot_distro_core::ContainerManager::new()?;
+    let target = container_mgr.get(&container).await?;
+
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+    core.network_manager().connect(
+        &network,
+        &container,
+        ip.as_deref(),
+        Some(target.rootfs_path.as_path()),
+    )?;
+
+    println!("Connected container {} to network {}", container, network);
+    if let Some(ip) = ip {
+        println!("IP: {}", ip);
+    }
+    Ok(())
 }
 
 async fn cmd_network_disconnect(network: String, container: String) -> Result<()> {
-    eprintln!(
-        "Disconnecting container {} from network {}",
+    let container_mgr = proot_distro_core::ContainerManager::new()?;
+    let target = container_mgr.get(&container).await?;
+
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+    core.network_manager()
+        .disconnect(&network, &container, Some(target.rootfs_path.as_path()))?;
+
+    println!(
+        "Disconnected container {} from network {}",
         container, network
     );
-    Err(anyhow::anyhow!("Network disconnect not yet implemented"))
+    Ok(())
 }
 
 async fn cmd_volume_create(name: String, driver: String, opts: Vec<String>) -> Result<()> {
@@ -2616,6 +2856,67 @@ async fn cmd_volume_rm(volumes: Vec<String>, force: bool) -> Result<()> {
 }
 
 async fn cmd_volume_prune(force: bool) -> Result<()> {
-    eprintln!("Pruning volumes (force: {})", force);
-    Err(anyhow::anyhow!("Volume prune not yet implemented"))
+    use proot_distro_core::ContainerManager;
+    use std::path::PathBuf;
+
+    // A volume is "in use" when some container mounts a path inside it. The
+    // container config is the only place that records this, so gather the mount
+    // sources before touching anything.
+    let container_mgr = ContainerManager::new()?;
+    let mut mounted: Vec<PathBuf> = Vec::new();
+    for info in container_mgr.list().await? {
+        if let Ok(c) = container_mgr.get(&info.name).await {
+            for b in &c.config.bind_mounts {
+                mounted.push(PathBuf::from(&b.source));
+            }
+        }
+    }
+
+    let mut core = proot_distro_core::ProotDistroCore::new()?;
+
+    // Decide the work set first, so the confirmation prompt lists exactly what
+    // will be deleted rather than re-scanning afterwards.
+    let mut unused: Vec<String> = Vec::new();
+    for v in core.storage_manager().list_volumes()? {
+        let used = mounted.iter().any(|m| m.starts_with(&v.mountpoint));
+        if used {
+            println!("Skipping in-use volume: {}", v.name);
+        } else {
+            unused.push(v.name);
+        }
+    }
+
+    if unused.is_empty() {
+        println!("No unused volumes to prune.");
+        return Ok(());
+    }
+
+    if !force {
+        println!(
+            "Will remove {} volume(s): {}",
+            unused.len(),
+            unused.join(", ")
+        );
+        print!("Continue? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    let mut pruned = 0usize;
+    for name in &unused {
+        match core.storage_manager().remove_volume(name) {
+            Ok(_) => {
+                println!("Pruned volume: {}", name);
+                pruned += 1;
+            }
+            Err(e) => eprintln!("Failed to prune volume {}: {}", name, e),
+        }
+    }
+    println!("Pruned {} volume(s)", pruned);
+    Ok(())
 }

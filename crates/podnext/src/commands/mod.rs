@@ -1,5 +1,17 @@
 //! CLI command implementations for service orchestration
 
+/// Trace-only logging, off unless `PN_DEBUG` is set in the environment.
+///
+/// These lines were unconditional upstream and flooded real output — a single
+/// `backup create` emitted ~280 kB of DEBUG for one alpine container, burying
+/// the result. Enable with `PN_DEBUG=1` when diagnosing.
+macro_rules! pn_trace {
+    ($($arg:tt)*) => {
+        if ::std::env::var_os("PN_DEBUG").is_some() {
+            ::std::eprintln!($($arg)*);
+        }
+    };
+}
 use anyhow::{bail, Context, Result};
 use pn_next::{
     BackupConfig,
@@ -1056,8 +1068,41 @@ async fn cmd_log_query(
 }
 
 async fn cmd_log_tail(service: Option<String>, lines: usize) -> Result<()> {
-    println!("Tailing logs for {:?} (last {} lines)", service, lines);
-    println!("(Log tailing not yet implemented)");
+    // The log store already backs `log query`; tailing is the same query with
+    // the newest entries and no filters beyond the service.
+    let config = StructuredLoggingConfig::default();
+    let logging = StructuredLogging::new(config).await?;
+
+    let mut entries = logging
+        .query(LogQuery {
+            service: service.clone(),
+            limit: Some(lines),
+            ..Default::default()
+        })
+        .await?;
+
+    entries.sort_by_key(|e| e.id);
+    let start = entries.len().saturating_sub(lines);
+
+    for e in &entries[start..] {
+        println!("{:>6} [{:?}] {}: {}", e.id, e.level, e.service, e.message);
+    }
+
+    // One-shot: `tail -f` semantics would need a subscription, and saying so is
+    // better than appearing to follow.
+    match service {
+        Some(s) => println!(
+            "--- {} entr{} for service '{}' (snapshot, not following) ---",
+            entries.len(),
+            if entries.len() == 1 { "y" } else { "ies" },
+            s
+        ),
+        None => println!(
+            "--- {} entr{} (snapshot, not following) ---",
+            entries.len(),
+            if entries.len() == 1 { "y" } else { "ies" }
+        ),
+    }
     Ok(())
 }
 
@@ -1438,10 +1483,18 @@ async fn cmd_policy_presets() -> Result<()> {
 
 pub async fn execute_backup_command(cmd: crate::BackupCommands) -> Result<()> {
     // Initialize backup manager with default config
+    pn_trace!("DEBUG: execute_backup_command START");
+    pn_trace!("DEBUG: Creating BackupConfig");
     let config = BackupConfig::default();
+    pn_trace!("DEBUG: backup_dir = {:?}", config.backup_dir);
+    pn_trace!("DEBUG: containers_dir = {:?}", config.containers_dir);
+    pn_trace!("DEBUG: Creating BackupManager");
     let manager = BackupManager::new(config);
+    pn_trace!("DEBUG: Starting backup manager");
     manager.start().await?;
+    pn_trace!("DEBUG: Backup manager started");
 
+    pn_trace!("DEBUG: Matching backup command");
     match cmd {
         crate::BackupCommands::Create {
             container,
@@ -1513,11 +1566,8 @@ async fn cmd_backup_list(
             backup_type: format!("{:?}", b.backup_type),
             status: format!("{:?}", b.status),
             size: crate::utils::format_size(b.size_bytes),
-            created_at: b
-                .created_at
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
+            created_at: chrono::DateTime::<chrono::Utc>::from(b.created_at)
+                .format("%Y-%m-%d %H:%M:%S")
                 .to_string(),
         })
         .collect();
@@ -1740,21 +1790,130 @@ pub async fn execute_dashboard_command(cmd: crate::DashboardCommands) -> Result<
     }
 }
 
-async fn cmd_dashboard_start(_dashboard: WebDashboard, port: u16, bind: String) -> Result<()> {
+async fn cmd_dashboard_start(dashboard: WebDashboard, port: u16, bind: String) -> Result<()> {
+    let pid_path = dashboard_pid_path()?;
+
+    // Refuse to start a second server rather than silently failing on bind.
+    if let Some(pid) = read_pid(&pid_path) {
+        if process_alive(pid) {
+            anyhow::bail!(
+                "Dashboard already running (pid {}); use 'podnext dashboard stop' first",
+                pid
+            );
+        }
+    }
+
+    if let Some(parent) = pid_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&pid_path, std::process::id().to_string())?;
+
     println!("Starting dashboard on {}:{}...", bind, port);
-    // Note: This will run forever, so we just print the info
-    println!("Dashboard would start on {}:{}", bind, port);
-    println!("(Use 'podnext dashboard start' in background to run continuously)");
-    Ok(())
+    println!("PID file: {}", pid_path.display());
+
+    // `WebDashboard::start` was never reached: it binds and serves until
+    // killed, which is exactly what this command should do.
+    let result = dashboard.start().await;
+
+    // A clean shutdown (Ctrl-C included) must not leave a stale pid file that
+    // makes `status` lie.
+    let _ = std::fs::remove_file(&pid_path);
+    result
 }
 
 async fn cmd_dashboard_stop(_dashboard: WebDashboard) -> Result<()> {
-    println!("Stopping dashboard server...");
-    println!("(Dashboard stop not yet implemented)");
+    let pid_path = dashboard_pid_path()?;
+    let pid = match read_pid(&pid_path) {
+        Some(pid) => pid,
+        None => {
+            println!(
+                "Dashboard is not running (no pid file at {})",
+                pid_path.display()
+            );
+            return Ok(());
+        }
+    };
+
+    if !process_alive(pid) {
+        println!(
+            "Dashboard is not running (stale pid {}); removing pid file",
+            pid
+        );
+        let _ = std::fs::remove_file(&pid_path);
+        return Ok(());
+    }
+
+    println!("Stopping dashboard server (pid {})...", pid);
+    std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status()?;
+
+    // Give it a moment to exit, then escalate the way an operator would.
+    for _ in 0..20 {
+        if !process_alive(pid) {
+            let _ = std::fs::remove_file(&pid_path);
+            println!("Dashboard stopped.");
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+
+    std::process::Command::new("kill")
+        .arg("-KILL")
+        .arg(pid.to_string())
+        .status()?;
+    let _ = std::fs::remove_file(&pid_path);
+    println!("Dashboard did not exit on SIGTERM; sent SIGKILL.");
     Ok(())
 }
 
 async fn cmd_dashboard_status(_dashboard: WebDashboard) -> Result<()> {
-    println!("Dashboard status: (not yet implemented)");
+    let pid_path = dashboard_pid_path()?;
+
+    let Some(pid) = read_pid(&pid_path) else {
+        println!("Dashboard: stopped (no pid file)");
+        return Ok(());
+    };
+
+    if !process_alive(pid) {
+        println!("Dashboard: stopped (stale pid {})", pid);
+        return Ok(());
+    }
+
+    // Port 8800 is the configured default; report whether it is actually held.
+    let listening = std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:8800".parse().unwrap(),
+        std::time::Duration::from_millis(500),
+    )
+    .is_ok();
+
+    println!("Dashboard: running");
+    println!("  pid     : {}", pid);
+    println!("  pid file: {}", pid_path.display());
+    println!(
+        "  127.0.0.1:8800 : {}",
+        if listening {
+            "accepting connections"
+        } else {
+            "not accepting"
+        }
+    );
     Ok(())
+}
+
+/// Where the dashboard records its pid, next to the other runtime state.
+fn dashboard_pid_path() -> Result<std::path::PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home directory"))?;
+    Ok(home.join(".podnext").join("dashboard.pid"))
+}
+
+fn read_pid(path: &std::path::Path) -> Option<u32> {
+    std::fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+fn process_alive(pid: u32) -> bool {
+    // `/proc/<pid>` disappears with the process; no signal needed, so nothing
+    // is disturbed by a mere status check.
+    std::path::Path::new(&format!("/proc/{}", pid)).exists()
 }

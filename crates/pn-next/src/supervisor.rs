@@ -4,6 +4,18 @@
 //! declarative service definitions, dependency DAG, health checks,
 //! and automatic restart policies.
 
+/// Trace-only logging, off unless `PN_DEBUG` is set in the environment.
+///
+/// These lines were unconditional upstream and flooded real output — a single
+/// `backup create` emitted ~280 kB of DEBUG for one alpine container, burying
+/// the result. Enable with `PN_DEBUG=1` when diagnosing.
+macro_rules! pn_trace {
+    ($($arg:tt)*) => {
+        if ::std::env::var_os("PN_DEBUG").is_some() {
+            ::std::eprintln!($($arg)*);
+        }
+    };
+}
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use futures::future::poll_fn;
@@ -907,7 +919,7 @@ impl ServiceSupervisor {
                 tokio::time::interval(Duration::from_millis(config.supervision_interval_ms));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-            eprintln!(
+            pn_trace!(
                 "DEBUG: Supervision loop started, interval={}ms",
                 config.supervision_interval_ms
             );
@@ -919,9 +931,9 @@ impl ServiceSupervisor {
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        eprintln!("DEBUG: Supervision loop tick");
+                        pn_trace!("DEBUG: Supervision loop tick");
                         if *state.read().await == SupervisorState::ShuttingDown {
-                            eprintln!("DEBUG: Supervision loop shutting down");
+                            pn_trace!("DEBUG: Supervision loop shutting down");
                             break;
                         }
                         // Run supervision tick
@@ -943,7 +955,7 @@ impl ServiceSupervisor {
                             // Check service health
                             let mut services_guard = services.write().await;
                             if let Some(managed) = services_guard.get_mut(&name) {
-                                eprintln!("DEBUG supervision_loop: name={}, state={:?}, process={:?}", name, managed.status.state, managed.process.is_some());
+                                pn_trace!("DEBUG supervision_loop: name={}, state={:?}, process={:?}", name, managed.status.state, managed.process.is_some());
                                 // Handle services that should be running but have no process (e.g., Restarting/Starting state)
                                 if managed.process.is_none() && matches!(managed.status.state, ServiceState::Restarting | ServiceState::Starting) {
                                     // Only restart if this is a genuine restart (has been restarted before) or explicitly marked for restart
@@ -953,7 +965,7 @@ impl ServiceSupervisor {
                                         // This is initial startup, let the normal start process handle it
                                         continue;
                                     }
-                                    eprintln!("DEBUG supervision_loop: Restarting service {} (state={:?})", name, managed.status.state);
+                                    pn_trace!("DEBUG supervision_loop: Restarting service {} (state={:?})", name, managed.status.state);
                                     // Clone necessary data before releasing lock
                                     let service_config = config.clone();
                                     let event_tx_clone = event_tx.clone();
@@ -1161,7 +1173,7 @@ impl ServiceSupervisor {
                         }
                     }
                     _ = &mut shutdown_fut => {
-                        eprintln!("DEBUG: Supervision loop received shutdown signal");
+                        pn_trace!("DEBUG: Supervision loop received shutdown signal");
                         break;
                     }
                 }
@@ -1232,7 +1244,7 @@ impl ServiceSupervisor {
         let mut services_guard = self.services.write().await;
 
         if let Some(managed) = services_guard.get_mut(&name) {
-            eprintln!(
+            pn_trace!(
                 "DEBUG check_service_health: name={}, state={:?}, process={:?}",
                 name,
                 managed.status.state,
@@ -1246,9 +1258,10 @@ impl ServiceSupervisor {
                 )
             {
                 // Try to restart the service
-                eprintln!(
+                pn_trace!(
                     "DEBUG: Restarting service {} (state={:?})",
-                    name, managed.status.state
+                    name,
+                    managed.status.state
                 );
                 drop(services_guard); // Release lock before calling start_service
                 self.start_service(&name).await?;
@@ -1810,22 +1823,23 @@ impl ServiceSupervisor {
                 }
                 Err(_) => {
                     // Timeout - force kill
-                    eprintln!("DEBUG: timeout reached, force={}", force);
+                    pn_trace!("DEBUG: timeout reached, force={}", force);
                     if force {
                         if let Some(pid) = child.id() {
-                            eprintln!("DEBUG: sending SIGKILL to pid {}", pid);
+                            pn_trace!("DEBUG: sending SIGKILL to pid {}", pid);
                             let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
                         }
-                        eprintln!(
+                        pn_trace!(
                             "DEBUG: force killing service {}, waiting for exit code",
                             name
                         );
                         match child.wait().await {
                             Ok(status) => {
                                 let code = status.code();
-                                eprintln!(
+                                pn_trace!(
                                     "DEBUG: force killed service {} exit code: {:?}",
-                                    name, code
+                                    name,
+                                    code
                                 );
                                 code
                             }
@@ -1835,7 +1849,7 @@ impl ServiceSupervisor {
                             }
                         }
                     } else {
-                        eprintln!("DEBUG: force=false, returning None");
+                        pn_trace!("DEBUG: force=false, returning None");
                         None
                     }
                 }
@@ -1853,12 +1867,12 @@ impl ServiceSupervisor {
                 let is_force_kill_on_abnormal = force
                     && matches!(config.restart.condition, RestartCondition::OnAbnormal)
                     && exit_code.map_or(true, |c| c < 0 || c > 128);
-                eprintln!("DEBUG stop_service: name={}, force={}, exit_code={:?}, is_force_kill_on_abnormal={}", name, force, exit_code, is_force_kill_on_abnormal);
+                pn_trace!("DEBUG stop_service: name={}, force={}, exit_code={:?}, is_force_kill_on_abnormal={}", name, force, exit_code, is_force_kill_on_abnormal);
                 managed.user_stopped = !is_force_kill_on_abnormal;
 
                 // If force kill on OnAbnormal, trigger restart
                 if is_force_kill_on_abnormal {
-                    eprintln!(
+                    pn_trace!(
                         "DEBUG: Triggering restart for force kill on OnAbnormal: {}",
                         name
                     );

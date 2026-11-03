@@ -25,6 +25,19 @@ pub struct VolumeInfo {
     pub size: u64,
 }
 
+/// Root directory holding volume data.
+///
+/// The mountpoint used to be hardcoded to `/var/lib/podnext/volumes/<name>`,
+/// which does not exist on Termux/Android (no writable `/var/lib`, no root), so
+/// every volume advertised an unusable path. Keep the data beside the
+/// containers instead, where the user can actually write.
+fn volumes_root() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".podnext")
+        .join("volumes")
+}
+
 /// Storage manager
 pub struct StorageManager {
     volumes: HashMap<String, VolumeConfig>,
@@ -69,6 +82,11 @@ impl StorageManager {
                 config.name
             )));
         }
+        // Materialise the mountpoint: a volume the guest can bind into must
+        // have a real directory to bind from.
+        let mountpoint = volumes_root().join(&config.name);
+        std::fs::create_dir_all(&mountpoint)?;
+
         self.volumes.insert(config.name.clone(), config.clone());
         self.save()?;
         Ok(())
@@ -90,7 +108,7 @@ impl StorageManager {
             .map(|(_, config)| VolumeInfo {
                 name: config.name.clone(),
                 driver: config.driver.clone(),
-                mountpoint: PathBuf::from(format!("/var/lib/podnext/volumes/{}", config.name)),
+                mountpoint: volumes_root().join(&config.name),
                 labels: config.labels.clone(),
                 options: config.options.clone(),
                 size: 0,
@@ -104,7 +122,7 @@ impl StorageManager {
             Ok(VolumeInfo {
                 name: config.name.clone(),
                 driver: config.driver.clone(),
-                mountpoint: PathBuf::from(format!("/var/lib/podnext/volumes/{}", config.name)),
+                mountpoint: volumes_root().join(&config.name),
                 labels: config.labels.clone(),
                 options: config.options.clone(),
                 size: 0,
