@@ -68,7 +68,8 @@ pub use dbus::{
 };
 pub use gitops::{
     Application, ApplicationDestination, ApplicationSource, GitOpsConfig, GitOpsEvent,
-    GitOpsManager, HealthStatus as GitOpsHealthStatus, SyncPolicy, SyncStatus,
+    GitOpsManager, HealthStatus as GitOpsHealthStatus, ResourceResult as GitOpsResourceResult,
+    ResourceStatus as GitOpsResourceStatus, SyncPolicy, SyncStatus,
 };
 pub use multiarch_build::{
     BuildArtifact, BuildEvent, BuildManager, BuildMetadata,

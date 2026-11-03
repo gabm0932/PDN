@@ -7,6 +7,7 @@
 pub mod services;
 pub mod zbus_client;
 
+use crate::supervisor::ServiceSupervisor;
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -125,6 +126,13 @@ pub struct DBusBroker {
     container_buses: Arc<RwLock<HashMap<String, Arc<RwLock<ContainerBus>>>>>,
     event_tx: broadcast::Sender<DBusEvent>,
     serial_counter: Arc<RwLock<u32>>,
+    /// The supervisor `org.pnnext.Supervisor` calls are forwarded to.
+    ///
+    /// Optional because `DBusBroker::new` is synchronous while
+    /// `ServiceSupervisor::initialize` is not, so the handle is attached by the
+    /// caller that already owns an initialized one (the daemon). A broker
+    /// without it answers those calls with an error rather than pretending.
+    supervisor: Option<Arc<ServiceSupervisor>>,
 }
 
 /// D-Bus broker events
@@ -174,6 +182,7 @@ impl DBusBroker {
             container_buses: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             serial_counter: Arc::new(RwLock::new(1)),
+            supervisor: None,
         }
     }
 
@@ -233,7 +242,17 @@ impl DBusBroker {
             container_buses: self.container_buses.clone(),
             event_tx: self.event_tx.clone(),
             serial_counter: self.serial_counter.clone(),
+            supervisor: self.supervisor.clone(),
         }
+    }
+
+    /// Attach the supervisor that `org.pnnext.Supervisor` calls act on.
+    ///
+    /// Separate from `new` because the supervisor must be initialized
+    /// asynchronously first; see the field comment.
+    pub fn with_supervisor(mut self, supervisor: Arc<ServiceSupervisor>) -> Self {
+        self.supervisor = Some(supervisor);
+        self
     }
 
     /// Register a well-known service name
@@ -369,6 +388,7 @@ struct ConnectionHandler {
     container_buses: Arc<RwLock<HashMap<String, Arc<RwLock<ContainerBus>>>>>,
     event_tx: broadcast::Sender<DBusEvent>,
     serial_counter: Arc<RwLock<u32>>,
+    supervisor: Option<Arc<ServiceSupervisor>>,
 }
 
 impl ConnectionHandler {
@@ -1030,13 +1050,69 @@ impl ConnectionHandler {
         container: &Option<String>,
         message: &DBusMessage,
     ) -> Result<Vec<DBusMessage>> {
-        // This would integrate with the ServiceSupervisor
-        // For now, return not implemented
-        Ok(vec![self.create_error_reply(
-            &message,
-            "org.freedesktop.DBus.Error.NotImplemented",
-            "Supervisor methods not yet implemented",
-        )?])
+        // Bodies are a single JSON-encoded string, the same convention
+        // `handle_request_name` uses.
+        let name: String = serde_json::from_slice(&message.body).map_err(|e| {
+            anyhow::anyhow!(
+                "{} expects one JSON-encoded service name in the body: {}",
+                message.header.member.as_deref().unwrap_or("?"),
+                e
+            )
+        })?;
+
+        let Some(supervisor) = self.supervisor.as_ref() else {
+            return Ok(vec![self.create_error_reply(
+                &message,
+                "org.freedesktop.DBus.Error.NotSupported",
+                "This broker was started without a supervisor: no service manager is \
+                 running to forward this call to. Start the daemon, or use \
+                 'podnext service <action>' directly.",
+            )?]);
+        };
+
+        let member = message.header.member.as_deref().unwrap_or_default();
+        let _ = sender;
+        let _ = container;
+
+        match member {
+            "StartService" => {
+                supervisor.start_service(&name).await?;
+                let body = serde_json::to_vec(&serde_json::json!({
+                    "service": name,
+                    "state": "started",
+                }))?;
+                Ok(vec![self.create_method_return(message, "s", body)?])
+            }
+            // The introspection XML advertises a plain Stop; force stays
+            // reserved for callers that ask for it, so a normal stop keeps the
+            // supervisor's graceful path.
+            "StopService" => {
+                supervisor.stop_service(&name, false).await?;
+                let body = serde_json::to_vec(&serde_json::json!({
+                    "service": name,
+                    "state": "stopped",
+                }))?;
+                Ok(vec![self.create_method_return(message, "s", body)?])
+            }
+            "RestartService" => {
+                supervisor.restart_service(&name).await?;
+                let body = serde_json::to_vec(&serde_json::json!({
+                    "service": name,
+                    "state": "restarted",
+                }))?;
+                Ok(vec![self.create_method_return(message, "s", body)?])
+            }
+            "GetStatus" => {
+                let status = supervisor.get_status(&name).await?;
+                let body = serde_json::to_vec(&status)?;
+                Ok(vec![self.create_method_return(message, "s", body)?])
+            }
+            other => Ok(vec![self.create_error_reply(
+                &message,
+                "org.freedesktop.DBus.Error.UnknownMethod",
+                &format!("Unknown supervisor method '{}'", other),
+            )?]),
+        }
     }
 
     async fn handle_reply(&self, _sender: &str, _message: &DBusMessage) -> Result<()> {
@@ -1131,6 +1207,44 @@ impl ConnectionHandler {
                 destination: original.header.sender.clone(),
                 sender: Some("org.freedesktop.DBus".to_string()),
                 signature: Some("ss".to_string()),
+                unix_fds: 0,
+            },
+            body,
+        })
+    }
+
+    /// A successful reply to a method call.
+    ///
+    /// Only `create_error_reply` existed, so every method that needed to answer
+    /// with data had to either lie or go unimplemented.
+    fn create_method_return(
+        &self,
+        original: &DBusMessage,
+        signature: &str,
+        body: Vec<u8>,
+    ) -> Result<DBusMessage> {
+        let serial = self
+            .serial_counter
+            .try_write()
+            .map(|mut c| {
+                let s = *c;
+                *c = c.wrapping_add(1);
+                s
+            })
+            .unwrap_or(0);
+
+        Ok(DBusMessage {
+            header: MessageHeader {
+                message_type: MessageType::MethodReturn,
+                flags: 0,
+                version: 1,
+                serial,
+                path: original.header.path.clone(),
+                interface: original.header.interface.clone(),
+                member: original.header.member.clone(),
+                destination: original.header.sender.clone(),
+                sender: Some("org.pnnext.Supervisor".to_string()),
+                signature: Some(signature.to_string()),
                 unix_fds: 0,
             },
             body,

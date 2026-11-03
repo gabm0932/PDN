@@ -25,6 +25,9 @@ use pn_next::{
     DaemonRuntime,
     DaemonRuntimeConfig,
     EvaluationContext,
+    GitOpsConfig,
+    GitOpsManager,
+    GitOpsResourceStatus,
     HealthStatus,
     LogLevel,
     LogQuery,
@@ -43,6 +46,7 @@ use pn_next::{
     StructuredLogging,
     StructuredLoggingConfig,
     SupervisorBuilder,
+    SyncStatus,
     TermuxBootConfig,
     TermuxBootManager,
     WakeLockConfig,
@@ -1300,24 +1304,153 @@ async fn cmd_dbus_list(format: crate::OutputFormat) -> Result<()> {
     Ok(())
 }
 
+/// Speak PDN's own broker framing: a 4-byte little-endian length prefix
+/// followed by one JSON message. This is *not* the binary D-Bus protocol, so
+/// `ZBusClient` cannot talk to this broker.
+async fn dbus_roundtrip(
+    socket_path: &str,
+    message: &serde_json::Value,
+) -> Result<Vec<serde_json::Value>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::net::UnixStream::connect(socket_path)
+        .await
+        .with_context(|| {
+            format!(
+                "Cannot reach the D-Bus broker at {}. Start it first (it is started by \
+                 'podnext daemon', or run 'podnext dbus serve' in another shell).",
+                socket_path
+            )
+        })?;
+
+    let payload = serde_json::to_vec(message)?;
+    stream
+        .write_all(&(payload.len() as u32).to_le_bytes())
+        .await?;
+    stream.write_all(&payload).await?;
+    stream.flush().await?;
+
+    // The broker pushes an unsolicited Hello on connect, then one message per
+    // request. Read until we have seen a reply to something other than the
+    // handshake, or the peer closes.
+    let mut replies = Vec::new();
+    loop {
+        let mut len_buf = [0u8; 4];
+        match stream.read_exact(&mut len_buf).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e.into()),
+        }
+        let len = u32::from_le_bytes(len_buf) as usize;
+        if len == 0 || len > 16 * 1024 * 1024 {
+            anyhow::bail!("Broker sent a nonsensical frame length ({})", len);
+        }
+        let mut buf = vec![0u8; len];
+        stream.read_exact(&mut buf).await?;
+        let value: serde_json::Value = serde_json::from_slice(&buf).context(
+            "The broker's reply is not the JSON framing this client speaks. A real \
+             D-Bus daemon answers in the binary protocol; 'podnext dbus call' targets \
+             PDN's own broker only.",
+        )?;
+        // Hello carries no destination; a reply/error addresses us.
+        let is_handshake = value["header"]["destination"].is_null();
+        replies.push(value);
+
+        if !is_handshake {
+            break;
+        }
+    }
+
+    Ok(replies)
+}
+
 async fn cmd_dbus_call(
     bus: String,
     path: String,
     interface: String,
     method: String,
-    _args: Vec<String>,
+    args: Vec<String>,
 ) -> Result<()> {
-    println!(
-        "Calling D-Bus method: {}.{} on {} at {}",
-        interface, method, bus, path
-    );
+    let config = DBusBrokerConfig::default();
+    let socket_path = config.socket_path.clone();
+    let _ = &bus;
+
+    // The broker decodes the body as a single JSON value, so `args` are joined
+    // into one and passed through as-is when they already parse as JSON.
+    let raw = args.join(" ");
+    let body: serde_json::Value = if raw.is_empty() {
+        serde_json::Value::String(String::new())
+    } else {
+        serde_json::from_str(&raw)
+            .unwrap_or(serde_json::Value::String(raw.trim_matches('"').to_string()))
+    };
+
+    let message = serde_json::json!({
+        "header": {
+            "message_type": "method_call",
+            "flags": 0,
+            "version": 1,
+            "serial": 1,
+            "path": path,
+            "interface": interface,
+            "member": method,
+            "destination": serde_json::Value::Null,
+            "sender": ":1.client",
+            "signature": serde_json::Value::Null,
+            "unix_fds": 0,
+        },
+        "body": serde_json::to_vec(&body)?,
+    });
+
+    let replies = dbus_roundtrip(&socket_path, &message).await?;
+    let reply = replies
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("Broker closed without answering"))?;
+
+    let msg_type = reply["header"]["message_type"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+
+    // The body is JSON bytes inside JSON; unwrap it so the caller sees the
+    // payload rather than an array of numbers.
+    let decoded = reply["body"]
+        .as_array()
+        .and_then(|bytes| {
+            let bytes: Vec<u8> = bytes
+                .iter()
+                .filter_map(|b| b.as_u64().map(|n| n as u8))
+                .collect();
+            serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+        })
+        .unwrap_or_else(|| reply["body"].clone());
+
+    match msg_type.as_str() {
+        "error" => {
+            let (name, text) = match &decoded {
+                serde_json::Value::Array(items) => (
+                    items.first().and_then(|v| v.as_str()).unwrap_or("Error"),
+                    items.get(1).and_then(|v| v.as_str()).unwrap_or(""),
+                ),
+                _ => ("Error", ""),
+            };
+            anyhow::bail!("{}: {}", name, text);
+        }
+        _ => {
+            println!("{}", serde_json::to_string_pretty(&decoded)?);
+        }
+    }
     Ok(())
 }
 
 async fn cmd_dbus_monitor(bus: String) -> Result<()> {
-    println!("Monitoring D-Bus signals on {}", bus);
-    println!("(D-Bus monitoring not yet implemented)");
-    Ok(())
+    let _ = bus;
+    anyhow::bail!(
+        "'dbus monitor' is not implemented: PDN's broker logs signals but never \
+         forwards them to a watcher, so there is nothing to stream yet. Watching \
+         would need a BecomeMonitor verb in the broker protocol; it does not exist. \
+         Use 'podnext log tail' for service output instead."
+    )
 }
 
 // ============ Socket Commands ============
@@ -1923,44 +2056,288 @@ pub async fn execute_gitops_command(cmd: crate::GitopsCommands) -> Result<()> {
     }
 }
 
+/// Build a manager pointed at the configured repo and load its state.
+///
+/// Deliberately does *not* call `start()`: that clones a git repository, and
+/// these commands operate on local manifests.
+async fn gitops_manager() -> Result<GitOpsManager> {
+    let mut manager = GitOpsManager::new(GitOpsConfig::default());
+    let loaded = manager.load_from_disk().await?;
+    // After load_from_disk: the stored status must win over the manifest's
+    // default, or every report shows Unknown again.
+    manager.load_state().await?;
+    if loaded == 0 {
+        println!(
+            "No applications found in {}.",
+            manager.applications_dir().display()
+        );
+    }
+    Ok(manager)
+}
+
 async fn cmd_gitops_sync(force: bool) -> Result<()> {
+    let manager = gitops_manager().await?;
+    let revision = manager.sync_now().await?;
+    manager.save_state().await?;
+
+    let total: usize = manager
+        .list_applications()
+        .await
+        .iter()
+        .map(|a| a.status.resources.len())
+        .sum();
+
     println!(
-        "Syncing with Git repository{}...",
+        "Synced {} application(s), {} resource(s) applied{}.",
+        revision,
+        total,
         if force { " (forced)" } else { "" }
     );
-    println!("(GitOps sync not yet implemented)");
     Ok(())
 }
 
-async fn cmd_gitops_status(_format: crate::OutputFormat) -> Result<()> {
-    println!("GitOps status: (not yet implemented)");
+async fn cmd_gitops_status(format: crate::OutputFormat) -> Result<()> {
+    let manager = gitops_manager().await?;
+    let apps = manager.list_applications().await;
+
+    #[derive(Tabled, Serialize)]
+    struct StatusRow {
+        #[tabled(rename = "NAME")]
+        name: String,
+        #[tabled(rename = "NAMESPACE")]
+        namespace: String,
+        #[tabled(rename = "SYNC")]
+        sync: String,
+        #[tabled(rename = "HEALTH")]
+        health: String,
+        #[tabled(rename = "REVISION")]
+        revision: String,
+        #[tabled(rename = "RESOURCES")]
+        resources: usize,
+        #[tabled(rename = "OBSERVED")]
+        observed: String,
+    }
+
+    let rows: Vec<StatusRow> = apps
+        .iter()
+        .map(|a| StatusRow {
+            name: a.name.clone(),
+            namespace: a.namespace.clone(),
+            sync: format!("{:?}", a.status.sync.status),
+            health: format!("{:?}", a.status.health.status),
+            revision: if a.status.sync.revision.is_empty() {
+                "-".to_string()
+            } else {
+                a.status.sync.revision.clone()
+            },
+            resources: a.status.resources.len(),
+            observed: if a.status.observed_at.is_empty() {
+                "-".to_string()
+            } else {
+                a.status.observed_at.clone()
+            },
+        })
+        .collect();
+
+    match format {
+        crate::OutputFormat::Table => {
+            if rows.is_empty() {
+                println!("No GitOps applications loaded.");
+            } else {
+                output_table(&rows);
+            }
+        }
+        crate::OutputFormat::Json => output_json(&apps)?,
+        crate::OutputFormat::Yaml => output_yaml(&apps)?,
+        crate::OutputFormat::Text => {
+            for r in rows {
+                println!(
+                    "{} {} {} {} {} {}",
+                    r.name, r.namespace, r.sync, r.health, r.revision, r.resources
+                );
+            }
+        }
+    }
     Ok(())
 }
 
-async fn cmd_gitops_resources(kind: Option<String>, _format: crate::OutputFormat) -> Result<()> {
+async fn cmd_gitops_resources(kind: Option<String>, format: crate::OutputFormat) -> Result<()> {
+    let manager = gitops_manager().await?;
+    let apps = manager.list_applications().await;
+
+    let wanted = kind.as_ref().map(|k| k.to_lowercase());
+    let flattened: Vec<(String, GitOpsResourceStatus)> = apps
+        .iter()
+        .flat_map(|a| {
+            a.status
+                .resources
+                .iter()
+                .cloned()
+                .map(move |r| (a.name.clone(), r))
+        })
+        .filter(|(_, r)| {
+            wanted
+                .as_ref()
+                .map(|k| r.kind.to_lowercase() == *k)
+                .unwrap_or(true)
+        })
+        .collect();
+
+    #[derive(Tabled, Serialize)]
+    struct ResourceRow {
+        #[tabled(rename = "APPLICATION")]
+        application: String,
+        #[tabled(rename = "KIND")]
+        kind: String,
+        #[tabled(rename = "NAME")]
+        name: String,
+        #[tabled(rename = "NAMESPACE")]
+        namespace: String,
+        #[tabled(rename = "STATUS")]
+        status: String,
+        #[tabled(rename = "HEALTH")]
+        health: String,
+    }
+
+    let rows: Vec<ResourceRow> = flattened
+        .iter()
+        .map(|(app, r)| ResourceRow {
+            application: app.clone(),
+            kind: r.kind.clone(),
+            name: r.name.clone(),
+            namespace: r.namespace.clone(),
+            status: format!("{:?}", r.sync_status),
+            health: format!("{:?}", r.health),
+        })
+        .collect();
+
+    match format {
+        crate::OutputFormat::Table => {
+            if rows.is_empty() {
+                println!(
+                    "No resources recorded for {} application(s). Run 'podnext gitops sync' \
+                     first - resources are filled in by a sync.",
+                    apps.len()
+                );
+            } else {
+                output_table(&rows);
+            }
+        }
+        crate::OutputFormat::Json => output_json(&rows)?,
+        crate::OutputFormat::Yaml => output_yaml(&rows)?,
+        crate::OutputFormat::Text => {
+            for r in rows {
+                println!("{} {} {} {}", r.kind, r.name, r.namespace, r.status);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Report what is known about drift without pretending to know more.
+///
+/// Drift means "the live cluster differs from the manifests", and there is no
+/// cluster adapter here, so the only honest signal is the recorded sync status.
+async fn cmd_gitops_drift(format: crate::OutputFormat) -> Result<()> {
+    let manager = gitops_manager().await?;
+    let apps = manager.list_applications().await;
+
+    let drifted: Vec<(String, String, String, String)> = apps
+        .iter()
+        .flat_map(|a| {
+            a.status
+                .resources
+                .iter()
+                .filter(|r| r.sync_status != SyncStatus::Synced)
+                .map({
+                    let app = a.name.clone();
+                    move |r| {
+                        (
+                            app.clone(),
+                            r.kind.clone(),
+                            r.name.clone(),
+                            format!("{:?}", r.sync_status),
+                        )
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    if drifted.is_empty() {
+        println!("No drift recorded: every synced resource last reported as Synced.");
+    } else {
+        #[derive(Tabled, Serialize)]
+        struct DriftRow {
+            #[tabled(rename = "APPLICATION")]
+            application: String,
+            #[tabled(rename = "KIND")]
+            kind: String,
+            #[tabled(rename = "NAME")]
+            name: String,
+            #[tabled(rename = "STATUS")]
+            status: String,
+        }
+        let rows: Vec<DriftRow> = drifted
+            .iter()
+            .map(|(a, k, n, s)| DriftRow {
+                application: a.clone(),
+                kind: k.clone(),
+                name: n.clone(),
+                status: s.clone(),
+            })
+            .collect();
+        match format {
+            crate::OutputFormat::Json => output_json(&rows)?,
+            crate::OutputFormat::Yaml => output_yaml(&rows)?,
+            _ => output_table(&rows),
+        }
+    }
+
+    // Stated every time, so nobody reads the line above as a live comparison.
     println!(
-        "Listing GitOps resources{}...",
-        kind.as_ref()
-            .map(|k| format!(" of kind '{}'", k))
-            .unwrap_or_default()
+        "Note: this reports the last recorded sync status. Comparing against a live \
+         cluster is not implemented - PDN has no cluster adapter, so real drift \
+         cannot be detected yet."
     );
-    println!("(GitOps resources not yet implemented)");
-    Ok(())
-}
-
-async fn cmd_gitops_drift(_format: crate::OutputFormat) -> Result<()> {
-    println!("Checking for drift: (not yet implemented)");
     Ok(())
 }
 
 async fn cmd_gitops_reconcile(name: Option<String>) -> Result<()> {
+    let manager = gitops_manager().await?;
+
+    match name {
+        Some(ref target) => {
+            // Allow naming either an application or a resource inside one.
+            let known = manager.get_application(target).await.is_some()
+                || manager
+                    .list_applications()
+                    .await
+                    .iter()
+                    .any(|a| a.status.resources.iter().any(|r| r.name == *target));
+
+            if !known {
+                anyhow::bail!(
+                    "'{}' is not a known application or resource. Run 'podnext gitops status' \
+                     to see what is loaded.",
+                    target
+                );
+            }
+            manager.sync_one(target).await?;
+            manager.save_state().await?;
+            println!("Re-synced '{}'.", target);
+        }
+        None => {
+            let n = manager.sync_now().await?;
+            manager.save_state().await?;
+            println!("Re-synced {} application(s).", n);
+        }
+    }
+
     println!(
-        "Reconciling{}...",
-        name.as_ref()
-            .map(|n| format!(" '{}'", n))
-            .unwrap_or_default()
+        "Scope: PDN's GitOps state only. No cluster write was attempted - resources are \
+         recorded, not applied to a running cluster."
     );
-    println!("(GitOps reconcile not yet implemented)");
     Ok(())
 }
 

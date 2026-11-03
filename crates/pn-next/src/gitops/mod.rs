@@ -101,26 +101,43 @@ pub enum ResourceType {
 }
 
 /// Resource specification from Git
+///
+/// Manifests are written in the usual camelCase (`apiVersion`, `resourceVersion`),
+/// which had no counterpart here, so nothing parsed. `spec` defaults because a
+/// resource may legitimately carry none.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitResource {
     pub api_version: String,
     pub kind: String,
     pub metadata: ResourceMetadata,
+    #[serde(default)]
     pub spec: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResourceMetadata {
     pub name: String,
+    #[serde(default)]
     pub namespace: Option<String>,
+    #[serde(default)]
     pub labels: HashMap<String, String>,
+    #[serde(default)]
     pub annotations: HashMap<String, String>,
+    #[serde(default)]
     pub uid: Option<String>,
+    #[serde(default)]
     pub resource_version: Option<String>,
+    #[serde(default)]
     pub generation: Option<i64>,
+    #[serde(default)]
     pub creation_timestamp: Option<String>,
+    #[serde(default)]
     pub deletion_timestamp: Option<String>,
+    #[serde(default)]
     pub finalizers: Vec<String>,
+    #[serde(default)]
     pub owner_references: Vec<OwnerReference>,
 }
 
@@ -135,9 +152,10 @@ pub struct OwnerReference {
 }
 
 /// Sync status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SyncStatus {
+    #[default]
     Unknown,
     Synced,
     OutOfSync,
@@ -155,8 +173,12 @@ pub struct Application {
     pub source: ApplicationSource,
     pub destination: ApplicationDestination,
     pub sync_policy: Option<SyncPolicy>,
+    #[serde(default)]
     pub ignore_differences: Vec<ResourceIgnoreDifference>,
+    #[serde(default)]
     pub info: Vec<Info>,
+    /// Filled in by a sync, never set by the manifest itself.
+    #[serde(default)]
     pub status: ApplicationStatus,
 }
 
@@ -271,7 +293,7 @@ pub struct Info {
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ApplicationStatus {
     pub sync: SyncStatusInfo,
     pub health: HealthStatusInfo,
@@ -282,7 +304,7 @@ pub struct ApplicationStatus {
     pub resources: Vec<ResourceStatus>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SyncStatusInfo {
     pub status: SyncStatus,
     pub revision: String,
@@ -295,16 +317,17 @@ pub struct ComparedTo {
     pub destination: ApplicationDestination,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HealthStatusInfo {
     pub status: HealthStatus,
     pub message: String,
     pub progress: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HealthStatus {
+    #[default]
     Unknown,
     Healthy,
     Degraded,
@@ -450,7 +473,19 @@ pub struct GitOpsManager {
 impl GitOpsManager {
     pub fn new(config: GitOpsConfig) -> Self {
         let (event_sender, _) = broadcast::channel(1000);
-        let repo_path = PathBuf::from("/tmp/pdn-gitops").join(&config.manifest_path);
+        // The repo root only. `manifest_path` is relative to a checkout and is
+        // applied when reading, so joining it here applied it twice.
+        // Android has no writable `/tmp`; `$TMPDIR` (Termux) or the cache dir is
+        // what actually exists, and `/tmp` fail here meant *every* GitOps
+        // command errored on the first write.
+        // PDN_GITOPS_DIR names the repository root itself, so a caller can point
+        // it straight at a checkout of manifests.
+        let repo_path = match std::env::var("PDN_GITOPS_DIR") {
+            Ok(v) if !v.is_empty() => PathBuf::from(v),
+            // Android has no writable `/tmp`; `$TMPDIR` (Termux) is what exists.
+            _ => PathBuf::from(std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string()))
+                .join("pdn-gitops"),
+        };
 
         Self {
             config,
@@ -463,6 +498,117 @@ impl GitOpsManager {
 
     fn emit_event(&self, event: GitOpsEvent) {
         self.event_sender.send(event).ok();
+    }
+
+    /// The directory applications are read from: `<repo>/applications`.
+    pub fn applications_dir(&self) -> PathBuf {
+        self.repo_path.join("applications")
+    }
+
+    /// Where the last-known state is persisted between invocations.
+    fn state_path(&self) -> PathBuf {
+        self.repo_path.join(".gitops-state.json")
+    }
+
+    /// Read applications from `<repo>/applications/*.yaml`.
+    ///
+    /// This is what populates `applications`; nothing did, so every command
+    /// operated on an empty map and `sync` looped over zero keys.
+    pub async fn load_from_disk(&mut self) -> Result<usize> {
+        let dir = self.applications_dir();
+        if !dir.exists() {
+            return Ok(0);
+        }
+
+        let mut loaded = HashMap::new();
+        for entry in std::fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if !path.is_file() || !Self::is_manifest(&path) {
+                continue;
+            }
+            match serde_yaml::from_str::<Application>(&std::fs::read_to_string(&path)?) {
+                Ok(app) if !app.name.is_empty() => {
+                    loaded.insert(app.name.clone(), app);
+                }
+                Ok(_) => warn!("{} has no name; skipped", path.display()),
+                Err(e) => warn!("Skipping application {}: {}", path.display(), e),
+            }
+        }
+
+        let count = loaded.len();
+        *self.applications.write().await = loaded;
+        Ok(count)
+    }
+
+    /// Restore the state written by a previous invocation.
+    pub async fn load_state(&self) -> Result<()> {
+        let path = self.state_path();
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            return Ok(());
+        };
+        let stored: HashMap<String, Application> = serde_json::from_str(&raw)
+            .with_context(|| format!("Corrupt GitOps state at {}", path.display()))?;
+
+        let mut apps = self.applications.write().await;
+        for (name, stored_app) in stored {
+            match apps.get_mut(&name) {
+                // The manifest defines identity; the store defines what has been
+                // observed. Copying only `status` keeps both truths intact.
+                // (`or_insert` here was a no-op — `load_from_disk` had already
+                // inserted every key — so the recorded status was discarded and
+                // every command reported Unknown.)
+                Some(app) => app.status = stored_app.status,
+                None => {
+                    apps.insert(name, stored_app);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Persist the current state for the next invocation.
+    pub async fn save_state(&self) -> Result<()> {
+        let path = self.state_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "Cannot create the GitOps state directory {}. Set PDN_GITOPS_DIR to a \
+                     writable path.",
+                    parent.display()
+                )
+            })?;
+        }
+        let apps = self.applications.read().await;
+        std::fs::write(&path, serde_json::to_vec_pretty(&*apps)?)?;
+        Ok(())
+    }
+
+    pub fn config(&self) -> &GitOpsConfig {
+        &self.config
+    }
+
+    pub fn repo_path(&self) -> &Path {
+        &self.repo_path
+    }
+
+    pub async fn list_applications(&self) -> Vec<Application> {
+        let mut apps: Vec<Application> = self.applications.read().await.values().cloned().collect();
+        apps.sort_by(|a, b| a.name.cmp(&b.name));
+        apps
+    }
+
+    pub async fn get_application(&self, name: &str) -> Option<Application> {
+        self.applications.read().await.get(name).cloned()
+    }
+
+    /// Sync every loaded application, returning how many synced cleanly.
+    pub async fn sync_now(&self) -> Result<usize> {
+        Self::sync_all_applications(
+            self.applications.clone(),
+            &self.repo_path,
+            &self.event_sender,
+        )
+        .await
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -607,20 +753,33 @@ impl GitOpsManager {
         apps: Arc<RwLock<HashMap<String, Application>>>,
         repo_path: &Path,
         event_sender: &broadcast::Sender<GitOpsEvent>,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let app_list = {
             let apps_read = apps.read().await;
             apps_read.keys().cloned().collect::<Vec<_>>()
         };
 
+        let mut synced = 0;
         for app_name in app_list {
-            if let Err(e) =
-                Self::sync_application(apps.clone(), repo_path, event_sender, &app_name).await
-            {
-                error!("Failed to sync application {}: {}", app_name, e);
+            match Self::sync_application(apps.clone(), repo_path, event_sender, &app_name).await {
+                Ok(()) => synced += 1,
+                // One bad application must not stop the rest, but the failure
+                // has to reach the caller rather than only the log.
+                Err(e) => error!("Failed to sync application {}: {}", app_name, e),
             }
         }
-        Ok(())
+        Ok(synced)
+    }
+
+    /// Sync one named application, taking `&self` so callers hold a manager.
+    pub async fn sync_one(&self, app_name: &str) -> Result<()> {
+        Self::sync_application(
+            self.applications.clone(),
+            &self.repo_path,
+            &self.event_sender,
+            app_name,
+        )
+        .await
     }
 
     async fn sync_application(
@@ -735,12 +894,25 @@ impl GitOpsManager {
                     started_at: chrono::Utc::now().to_rfc3339(),
                     finished_at: Some(chrono::Utc::now().to_rfc3339()),
                     sync_result: Some(SyncResult {
-                        revision: revision,
-                        resources: vec![],
+                        revision: revision.clone(),
+                        resources: resources
+                            .iter()
+                            .map(|r| ResourceResult {
+                                hook_phase: r.hook_phase.clone(),
+                                group: r.group.clone(),
+                                kind: r.kind.clone(),
+                                name: r.name.clone(),
+                                namespace: r.namespace.clone(),
+                                status: r.sync_status.clone(),
+                                message: r.message.clone(),
+                            })
+                            .collect(),
                         hooks: vec![],
                     }),
                 });
-                app_mut.status.resources = vec![];
+                // These used to be thrown away one line after being built, which
+                // is why `gitops resources` could never show anything.
+                app_mut.status.resources = resources.clone();
                 app_mut.status.history.insert(
                     0,
                     SyncHistory {
@@ -776,39 +948,72 @@ impl GitOpsManager {
         let full_path = repo_path.join(manifest_path);
         let mut resources: Vec<GitResource> = Vec::new();
 
+        if !full_path.exists() {
+            return Ok(resources);
+        }
+
         if full_path.is_file() {
-            Self::read_manifest_file(&full_path, &mut Vec::new())?;
-        } else if full_path.is_dir() {
+            if Self::is_manifest(&full_path) {
+                Self::read_manifest_file(&full_path, &mut resources)?;
+            }
+        } else {
             for entry in walkdir::WalkDir::new(&full_path) {
                 let entry = entry?;
-                if entry.file_type().is_file() {
-                    let path = entry.path();
-                    if path
-                        .extension()
-                        .map(|e| e == "yaml" || e == "yml")
-                        .unwrap_or(false)
-                    {
-                        Self::read_manifest_file(path, &mut Vec::new())?;
+                if entry.file_type().is_file() && Self::is_manifest(entry.path()) {
+                    // One unreadable file must not abort the whole sync; the
+                    // walk collects what it can and reports the rest.
+                    if let Err(e) = Self::read_manifest_file(entry.path(), &mut resources) {
+                        warn!("Skipping manifest {}: {}", entry.path().display(), e);
                     }
                 }
             }
         }
 
-        Ok(Vec::new()) // Simplified
+        Ok(resources)
     }
 
-    fn read_manifest_file(path: &Path, _resources: &mut Vec<GitResource>) -> Result<()> {
+    fn is_manifest(path: &Path) -> bool {
+        path.extension()
+            .map(|e| e == "yaml" || e == "yml")
+            .unwrap_or(false)
+    }
+
+    /// Parse every YAML document in one file into resources.
+    ///
+    /// `serde_yaml::Deserializer` is used rather than a single `from_str`
+    /// because manifests are routinely multi-document (`---` separated).
+    fn read_manifest_file(path: &Path, resources: &mut Vec<GitResource>) -> Result<()> {
         let content = std::fs::read_to_string(path)?;
-        // Parse YAML documents - simplified for now
-        let _ = serde_yaml::from_str::<serde_yaml::Value>(&content)?;
+
+        for document in serde_yaml::Deserializer::from_str(&content) {
+            // An empty document (a trailing `---`) is not an error.
+            let value = serde_yaml::Value::deserialize(document)?;
+            if value.is_null() {
+                continue;
+            }
+            match serde_yaml::from_value::<GitResource>(value) {
+                Ok(resource) => resources.push(resource),
+                Err(e) => warn!("Skipping a document in {}: {}", path.display(), e),
+            }
+        }
+
         Ok(())
     }
 
+    /// The revision to record for a checkout.
+    ///
+    /// A plain directory of manifests is a legitimate source, so a missing
+    /// repository is "unversioned", not a failure.
     async fn get_current_revision(repo_path: &Path) -> Result<String> {
-        let repo = git2::Repository::open(repo_path)?;
-        let head = repo.head()?;
-        let commit = head.peel_to_commit()?;
-        Ok(commit.id().to_string())
+        let revision = git2::Repository::open(repo_path)
+            .ok()
+            .and_then(|repo| {
+                let head = repo.head().ok()?;
+                let commit = head.peel_to_commit().ok()?;
+                Some(commit.id().to_string())
+            })
+            .unwrap_or_else(|| "unversioned".to_string());
+        Ok(revision)
     }
 
     async fn start_webhook_server(&self) -> Result<()> {
