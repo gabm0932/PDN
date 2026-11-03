@@ -2,7 +2,7 @@ name: DevContainer Test
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, main, develop]
     paths:
       - '.devcontainer/**'
   pull_request:

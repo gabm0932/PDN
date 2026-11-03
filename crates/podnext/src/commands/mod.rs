@@ -1255,15 +1255,39 @@ async fn cmd_log_flush() -> Result<()> {
 
 pub async fn execute_dbus_command(cmd: crate::DbusCommands) -> Result<()> {
     match cmd {
+        crate::DbusCommands::Serve { socket } => cmd_dbus_serve(socket).await,
         crate::DbusCommands::List { format } => cmd_dbus_list(format).await,
         crate::DbusCommands::Call {
             bus,
+            socket,
             path,
             interface,
             method,
             args,
-        } => cmd_dbus_call(bus, path, interface, method, args).await,
+        } => cmd_dbus_call(bus, socket, path, interface, method, args).await,
         crate::DbusCommands::Monitor { bus } => cmd_dbus_monitor(bus).await,
+    }
+}
+
+/// Listen on the broker socket until interrupted.
+async fn cmd_dbus_serve(socket: Option<String>) -> Result<()> {
+    let mut config = DBusBrokerConfig::default();
+    if let Some(path) = socket {
+        config.socket_path = path;
+    }
+    let path = config.socket_path.clone();
+
+    let broker = DBusBroker::new(config);
+    println!("D-Bus broker listening on {}", path);
+    println!("Press Ctrl-C to stop.");
+
+    // The signature is `&self`, so the handle has to outlive the call.
+    tokio::select! {
+        result = broker.start() => result,
+        _ = tokio::signal::ctrl_c() => {
+            println!("Stopped.");
+            Ok(())
+        }
     }
 }
 
@@ -1334,7 +1358,10 @@ async fn dbus_roundtrip(
     // request. Read until we have seen a reply to something other than the
     // handshake, or the peer closes.
     let mut replies = Vec::new();
-    loop {
+    // The broker pushes an unsolicited Hello before it reads anything. Hello
+    // carries a destination (the client's unique name) just like a real reply
+    // does, so it cannot be told apart that way — it is matched by member.
+    for _ in 0..5 {
         let mut len_buf = [0u8; 4];
         match stream.read_exact(&mut len_buf).await {
             Ok(_) => {}
@@ -1352,13 +1379,15 @@ async fn dbus_roundtrip(
              D-Bus daemon answers in the binary protocol; 'podnext dbus call' targets \
              PDN's own broker only.",
         )?;
-        // Hello carries no destination; a reply/error addresses us.
-        let is_handshake = value["header"]["destination"].is_null();
-        replies.push(value);
 
-        if !is_handshake {
-            break;
+        if value["header"]["member"].as_str() == Some("Hello") {
+            continue;
         }
+
+        replies.push(value);
+        // One request, one reply: anything past this is unsolicited and is
+        // reported to the caller rather than looped on forever.
+        break;
     }
 
     Ok(replies)
@@ -1366,13 +1395,15 @@ async fn dbus_roundtrip(
 
 async fn cmd_dbus_call(
     bus: String,
+    socket: Option<String>,
     path: String,
     interface: String,
     method: String,
     args: Vec<String>,
 ) -> Result<()> {
-    let config = DBusBrokerConfig::default();
-    let socket_path = config.socket_path.clone();
+    // Without this the client always dialled the default path, so a broker
+    // started with `--socket` was unreachable even though it was running.
+    let socket_path = socket.unwrap_or_else(|| DBusBrokerConfig::default().socket_path);
     let _ = &bus;
 
     // The broker decodes the body as a single JSON value, so `args` are joined
@@ -1387,7 +1418,10 @@ async fn cmd_dbus_call(
 
     let message = serde_json::json!({
         "header": {
-            "message_type": "method_call",
+            // MessageType derives `rename_all = "lowercase"`, so MethodCall
+            // serialises to "methodcall" — "method_call" fails to parse at the
+            // broker, which then closes the connection with no reply.
+            "message_type": "methodcall",
             "flags": 0,
             "version": 1,
             "serial": 1,

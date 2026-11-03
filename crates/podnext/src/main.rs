@@ -892,6 +892,15 @@ enum LogCommands {
 #[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum DbusCommands {
+    /// Run the D-Bus broker in the foreground
+    ///
+    /// Needed because nothing else starts it: the daemon does not, and `list`
+    /// only constructs a broker without listening (so it always reports none).
+    Serve {
+        /// Socket path (defaults to the broker's own default)
+        #[arg(long)]
+        socket: Option<String>,
+    },
     /// List D-Bus services
     List {
         /// Output format
@@ -902,6 +911,9 @@ enum DbusCommands {
     Call {
         /// Bus name
         bus: String,
+        /// Broker socket path (defaults to the broker's own default)
+        #[arg(long)]
+        socket: Option<String>,
         /// Object path
         path: String,
         /// Interface
