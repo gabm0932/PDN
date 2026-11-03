@@ -39,7 +39,7 @@ impl ContainerManager {
         Ok(manager)
     }
 
-    /// Load existing containers from metadata.json files
+    /// Load existing containers from disk, inspecting metadata.json and /etc/os-release
     async fn load_containers(&self) -> Result<()> {
         let containers_dir = self.paths.containers_dir.clone();
         if !containers_dir.exists() {
@@ -51,40 +51,73 @@ impl ContainerManager {
         for entry in std::fs::read_dir(containers_dir)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
+            let rootfs_path = entry.path().join("rootfs");
+            if !rootfs_path.is_dir() {
+                continue;
+            }
+
+            // Only consider directories that have a usable rootfs
+            let is_valid_rootfs = rootfs_path.join("etc").exists()
+                || rootfs_path.join("bin").exists()
+                || rootfs_path.join("usr").exists();
+            if !is_valid_rootfs {
+                continue;
+            }
 
             let metadata_path = entry.path().join("metadata.json");
+            let mut meta_distro = None;
+            let mut meta_version = None;
+            let mut created_at = None;
+
             if metadata_path.exists() {
                 if let Ok(metadata_str) = std::fs::read_to_string(&metadata_path) {
                     if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str) {
-                        let rootfs_path = entry.path().join("rootfs");
-                        if rootfs_path.exists() {
-                            // metadata.json carries the image identity written at
-                            // install time. Defaulting it away made every row read
-                            // "ubuntu 22.04" regardless of what was installed.
-                            let distro = metadata
-                                .get("image")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            let version = metadata
-                                .get("tag")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("latest")
-                                .to_string();
-                            let config = ContainerConfig {
-                                name: name.clone(),
-                                distro,
-                                version,
-                                rootfs_path: Some(rootfs_path),
-                                ..Default::default()
-                            };
-
-                            if let Ok(container) = Container::new(name.clone(), config) {
-                                containers.insert(name, container);
+                        meta_distro = metadata
+                            .get("image")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        meta_version = metadata
+                            .get("tag")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        if let Some(ts_str) = metadata.get("created_at").and_then(|v| v.as_str()) {
+                            if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
+                                created_at = Some(dt.with_timezone(&Utc));
                             }
                         }
                     }
                 }
+            }
+
+            // Inspect /etc/os-release in rootfs so DISTRO matches the real Linux distribution
+            // (e.g. debian, ubuntu, alpine) rather than arbitrary container/target names.
+            let (distro, version) = if let Some((os_id, os_ver)) = detect_os_release(&rootfs_path) {
+                (os_id, os_ver)
+            } else {
+                (
+                    meta_distro.unwrap_or_else(|| "unknown".to_string()),
+                    meta_version.unwrap_or_else(|| "latest".to_string()),
+                )
+            };
+
+            let config = ContainerConfig {
+                name: name.clone(),
+                distro,
+                version,
+                arch: std::env::consts::ARCH.to_string(),
+                rootfs_path: Some(rootfs_path.clone()),
+                ..Default::default()
+            };
+
+            if let Ok(mut container) = Container::new(name.clone(), config) {
+                if let Some(created) = created_at {
+                    container.created_at = created;
+                } else if let Ok(dir_meta) = entry.metadata() {
+                    if let Ok(ctime) = dir_meta.modified() {
+                        container.created_at = DateTime::<Utc>::from(ctime);
+                    }
+                }
+                containers.insert(name, container);
             }
         }
 
@@ -569,4 +602,41 @@ pub struct SessionInfo {
     pub pid: Option<u32>,
     pub status: String,
     pub started_at: DateTime<Utc>,
+}
+
+/// Detect Linux distribution ID and Version from rootfs (/etc/os-release or /usr/lib/os-release)
+fn detect_os_release(rootfs: &Path) -> Option<(String, String)> {
+    let candidates = [
+        rootfs.join("etc/os-release"),
+        rootfs.join("usr/lib/os-release"),
+    ];
+
+    for path in &candidates {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            let mut id = None;
+            let mut version_id = None;
+
+            for line in content.lines() {
+                let line = line.trim();
+                if line.starts_with('#') || line.is_empty() {
+                    continue;
+                }
+                if let Some((k, v)) = line.split_once('=') {
+                    let k = k.trim();
+                    let v = v.trim().trim_matches('"').trim_matches('\'');
+                    if k == "ID" && id.is_none() {
+                        id = Some(v.to_string());
+                    } else if (k == "VERSION_ID" || k == "VERSION_CODENAME") && version_id.is_none()
+                    {
+                        version_id = Some(v.to_string());
+                    }
+                }
+            }
+
+            if let Some(id) = id {
+                return Some((id, version_id.unwrap_or_else(|| "rolling".to_string())));
+            }
+        }
+    }
+    None
 }

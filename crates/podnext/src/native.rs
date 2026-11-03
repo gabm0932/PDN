@@ -148,19 +148,26 @@ pub async fn install_image_native(
     fs::create_dir_all(&rootfs)?;
 
     // Step 1: Get auth token from Docker Hub
-    println!("Fetching auth token...");
+    println!("[1/4] Authenticating with Docker Hub registry...");
     let token = get_docker_hub_token(&name).await?;
 
     // Step 2: Get manifest list to find correct platform
-    println!("Fetching manifest...");
+    println!(
+        "[2/4] Fetching image manifest (linux/{})...",
+        std::env::consts::ARCH
+    );
     let manifest = get_manifest(&name, &tag, &token).await?;
 
     // Step 3: Download and extract layers
-    println!("Downloading layers...");
-    download_and_extract_layers(&name, &manifest, &token, &rootfs).await?;
+    println!("[3/4] Downloading and extracting OCI layers (Android-safe)...");
+    if let Err(e) = download_and_extract_layers(&name, &manifest, &token, &rootfs).await {
+        // Clean up partial rootfs directory on failure so it does not leave a broken state
+        let _ = fs::remove_dir_all(&rootfs);
+        return Err(e);
+    }
 
     // Step 4: Apply proot-compat patches
-    println!("Applying compatibility patches...");
+    println!("[4/4] Configuring guest environment, DNS, and /dev/shm...");
     proot_compat::patch_rootfs(&rootfs)?;
 
     // Step 4b: Set up guest network config files.

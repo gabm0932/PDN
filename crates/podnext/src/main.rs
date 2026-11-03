@@ -236,6 +236,13 @@ enum Commands {
     // TIER 1: CORE DISTRO COMMANDS (Simple & Daily Usage - proot-distro parity)
     // ------------------------------------------------------------------------
     /// [Core] Install distribution from OCI image
+    #[command(
+        long_about = "Download and unpack an OCI/Docker container image into a clean, isolated rootfs.\n\n\
+        EXAMPLES:\n  \
+        podnext install debian:13\n  \
+        podnext install ubuntu:22.04 --name my-ubuntu\n  \
+        podnext install alpine:latest --force"
+    )]
     Install {
         /// Image reference (e.g., ubuntu:22.04, debian:12, alpine:latest)
         image: String,
@@ -248,6 +255,13 @@ enum Commands {
     },
 
     /// [Core] List created containers
+    #[command(
+        long_about = "List all installed distributions and containers with their status, real Linux OS, and architecture.\n\n\
+        EXAMPLES:\n  \
+        podnext list\n  \
+        podnext list --format json\n  \
+        podnext list --no-all"
+    )]
     List {
         /// Show all (including stopped)
         #[arg(short = 'a', long, default_value = "true")]
@@ -261,6 +275,13 @@ enum Commands {
     },
 
     /// [Core] Start interactive shell inside a container
+    #[command(
+        long_about = "Start an interactive root/user shell inside an installed container with isolated environment.\n\n\
+        EXAMPLES:\n  \
+        podnext login debian\n  \
+        podnext login ubuntu -- /bin/bash\n  \
+        podnext login debian --user 1000"
+    )]
     Login {
         /// Container name
         container: String,
@@ -273,6 +294,13 @@ enum Commands {
     },
 
     /// [Core] Run command in container
+    #[command(
+        long_about = "Run a command inside an installed container directly from the host without opening an interactive shell.\n\n\
+        EXAMPLES:\n  \
+        podnext run debian -- apt update && apt upgrade -y\n  \
+        podnext run debian -- curl -fsSL https://example.com\n  \
+        podnext run ubuntu -v /sdcard:/mnt/sdcard -- ls -la /mnt/sdcard"
+    )]
     Run {
         /// Container name
         container: String,
@@ -280,7 +308,7 @@ enum Commands {
         #[arg(last = true)]
         command: Vec<String>,
         /// Automatically remove the container when it exits
-        #[arg(long = "rm", short = 'r', global = false)]
+        #[arg(long = "rm", global = false)]
         rm: bool,
         /// Run container in background and print container ID
         #[arg(long = "detach", short = 'd', global = false)]
@@ -294,7 +322,6 @@ enum Commands {
         /// Bind mount a volume (host_path:container_path[:ro])
         #[arg(
             long = "volume",
-            short = 'v',
             global = false,
             value_name = "HOST_PATH:CONTAINER_PATH[:ro]"
         )]
@@ -320,7 +347,7 @@ enum Commands {
         #[arg(long = "user", short = 'u', global = false)]
         user: Option<String>,
         /// Working directory inside the container
-        #[arg(long = "workdir", short = 'w', global = false)]
+        #[arg(long = "workdir", global = false)]
         workdir: Option<String>,
     },
 
@@ -338,6 +365,12 @@ enum Commands {
     },
 
     /// [Core] Delete a container
+    #[command(
+        long_about = "Permanently remove an installed container and its rootfs from disk.\n\n\
+        EXAMPLES:\n  \
+        podnext remove debian\n  \
+        podnext remove my-ubuntu --force"
+    )]
     Remove {
         /// Container name
         name: String,
@@ -347,6 +380,12 @@ enum Commands {
     },
 
     /// [Core] Rename an installed container
+    #[command(
+        long_about = "Safely rename an existing container in its directory structure and metadata.\n\n\
+        EXAMPLES:\n  \
+        podnext rename debian deb-prod\n  \
+        podnext rename ubuntu test-ub"
+    )]
     Rename {
         /// Current container name
         oldname: String,
@@ -358,6 +397,13 @@ enum Commands {
     ///
     /// Paths are `[CONTAINER:]PATH`; a path without a container prefix is the
     /// host's.
+    #[command(
+        long_about = "Copy files or directories between the host and containers safely (strictly rejects path traversal escapes).\n\n\
+        EXAMPLES:\n  \
+        podnext copy debian:/etc/resolv.conf ./resolv.conf\n  \
+        podnext copy ./my-app debian:/opt/my-app -R\n  \
+        podnext copy debian:/var/log/app.log ./app.log -m"
+    )]
     Copy {
         /// `[CONTAINER:]SRC`
         source: String,
@@ -375,6 +421,11 @@ enum Commands {
     ///
     /// Deletes the container directory and reinstalls it. All data inside the
     /// container is lost, as with proot-distro's `reset`.
+    #[command(
+        long_about = "Reinstall a container cleanly from its original OCI image, discarding all user modifications.\n\n\
+        EXAMPLES:\n  \
+        podnext reset debian"
+    )]
     Reset {
         /// Container name
         name: String,
@@ -384,6 +435,12 @@ enum Commands {
     ///
     /// Like `copy`, but only the differences move: a file is transferred when its
     /// content differs, so a second run is a no-op. Paths are `[CONTAINER:]PATH`.
+    #[command(
+        long_about = "Fast delta directory synchronization between host and containers based on SHA256 content hashing.\n\n\
+        EXAMPLES:\n  \
+        podnext sync ./src debian:/root/src\n  \
+        podnext sync ./src debian:/root/src --delete"
+    )]
     Sync {
         /// `[CONTAINER:]SRC`
         source: String,
@@ -395,11 +452,20 @@ enum Commands {
     },
 
     /// [Core] Search images on Docker Hub
+    #[command(
+        long_about = "Search for container images on Docker Hub, or list verified official distributions when run without arguments.\n\n\
+        EXAMPLES:\n  \
+        podnext search\n  \
+        podnext search debian\n  \
+        podnext search ubuntu --limit 5\n  \
+        podnext search alpine --format json"
+    )]
     Search {
-        /// Search query
+        /// Search query (omit to display popular verified distributions)
+        #[arg(default_value = "")]
         query: String,
         /// Limit results
-        #[arg(short, long, default_value = "25")]
+        #[arg(short, long, default_value = "10")]
         limit: usize,
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
@@ -430,6 +496,12 @@ enum Commands {
 
     /// [Core] Show system information
     #[command(name = "info")]
+    #[command(
+        long_about = "Display host kernel, system architecture, CPU cores, memory limits, and PDN capabilities.\n\n\
+        EXAMPLES:\n  \
+        podnext info\n  \
+        podnext info --format json"
+    )]
     Info {
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
@@ -438,6 +510,10 @@ enum Commands {
 
     /// [Core] Show version
     #[command(name = "version")]
+    #[command(long_about = "Display version and build information for PDN.\n\n\
+        EXAMPLES:\n  \
+        podnext version\n  \
+        podnext version --format json")]
     Version {
         /// Output format
         #[arg(short, long, value_enum, default_value = "text")]
@@ -1720,15 +1796,7 @@ async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result
         .clone()
         .unwrap_or_else(|| image.split(':').next().unwrap_or(&image).to_string());
 
-    println!("Installing '{}' as '{}'...", image, container_name);
-
-    let rootfs: PathBuf = install_image_native(&image, &container_name, force, None).await?;
-
-    println!("\nContainer '{}' installed successfully!", container_name);
-    println!("Rootfs: {}", rootfs.display());
-    println!("\nTo start the container:");
-    println!("  podnext login {}", container_name);
-
+    let _rootfs: PathBuf = install_image_native(&image, &container_name, force, None).await?;
     Ok(())
 }
 
@@ -1997,6 +2065,93 @@ async fn cmd_info(format: OutputFormat) -> Result<()> {
 }
 
 async fn cmd_search(query: String, limit: usize, format: OutputFormat) -> Result<()> {
+    if query.trim().is_empty() {
+        #[derive(Tabled, Serialize)]
+        struct CuratedDistro {
+            #[tabled(rename = "DISTRIBUTION")]
+            name: &'static str,
+            #[tabled(rename = "RECOMMENDED TAG")]
+            tag: &'static str,
+            #[tabled(rename = "DESCRIPTION")]
+            description: &'static str,
+            #[tabled(rename = "INSTALL COMMAND")]
+            install_cmd: &'static str,
+        }
+
+        let curated = vec![
+            CuratedDistro {
+                name: "debian",
+                tag: "13 (trixie) / 12 (bookworm)",
+                description: "Stable, lightweight, vast apt package ecosystem",
+                install_cmd: "podnext install debian:13",
+            },
+            CuratedDistro {
+                name: "ubuntu",
+                tag: "24.04 (noble) / 22.04 (jammy)",
+                description: "Standard LTS Linux development environment",
+                install_cmd: "podnext install ubuntu:22.04",
+            },
+            CuratedDistro {
+                name: "alpine",
+                tag: "latest / 3.20",
+                description: "Ultra-small ~5MB musl/busybox base",
+                install_cmd: "podnext install alpine:latest",
+            },
+            CuratedDistro {
+                name: "archlinux",
+                tag: "latest",
+                description: "Rolling-release Arch Linux with pacman",
+                install_cmd: "podnext install archlinux:latest",
+            },
+            CuratedDistro {
+                name: "fedora",
+                tag: "40",
+                description: "Modern RPM-based Fedora workstation",
+                install_cmd: "podnext install fedora:40",
+            },
+            CuratedDistro {
+                name: "rockylinux",
+                tag: "9",
+                description: "Enterprise RHEL binary-compatible distro",
+                install_cmd: "podnext install rockylinux:9",
+            },
+            CuratedDistro {
+                name: "almalinux",
+                tag: "9",
+                description: "Enterprise Linux 1:1 RHEL compatible",
+                install_cmd: "podnext install almalinux:9",
+            },
+            CuratedDistro {
+                name: "voidlinux",
+                tag: "latest",
+                description: "Independent distro with xbps package manager",
+                install_cmd: "podnext install voidlinux/voidlinux:latest",
+            },
+            CuratedDistro {
+                name: "kali-rolling",
+                tag: "latest",
+                description: "Penetration testing & forensics tools platform",
+                install_cmd: "podnext install kalilinux/kali-rolling:latest",
+            },
+        ];
+
+        match format {
+            OutputFormat::Table => {
+                println!("Curated Official Distributions for PDN:\n");
+                output_table(&curated);
+                println!("\nHint: Run 'podnext install <distro:tag>' or search Docker Hub with 'podnext search <term>'.");
+            }
+            OutputFormat::Json => output_json(&curated)?,
+            OutputFormat::Yaml => output_yaml(&curated)?,
+            OutputFormat::Text => {
+                for d in curated {
+                    println!("{} ({}) - {}", d.name, d.tag, d.install_cmd);
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let images = search_docker_hub(&query, limit).await?;
 
     #[derive(Tabled, Serialize)]
@@ -2045,7 +2200,10 @@ async fn cmd_search(query: String, limit: usize, format: OutputFormat) -> Result
         .collect();
 
     match format {
-        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Table => {
+            output_table(&rows);
+            println!("\nHint: To install an image, run: podnext install <name>[:tag]");
+        }
         OutputFormat::Json => output_json(&serializable)?,
         OutputFormat::Yaml => output_yaml(&serializable)?,
         OutputFormat::Text => {
