@@ -33,6 +33,12 @@ pub struct ExtensionManager {
     extensions: Vec<Box<dyn Extension>>,
 }
 
+impl Default for ExtensionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExtensionManager {
     pub fn new() -> Self {
         Self {

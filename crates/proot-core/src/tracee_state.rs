@@ -19,6 +19,12 @@ pub struct StateEvent {
     pub syscall: Option<i64>,
 }
 
+impl Default for TraceeStateManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TraceeStateManager {
     pub fn new() -> Self {
         Self {

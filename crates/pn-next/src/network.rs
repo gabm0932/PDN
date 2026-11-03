@@ -417,7 +417,7 @@ impl NetworkManager {
         let config_json = serde_json::to_string(cni_config)?;
 
         // Execute first plugin (typically bridge)
-        for plugin in &cni_config.plugins {
+        if let Some(plugin) = cni_config.plugins.first() {
             let plugin_path = self.find_plugin(&plugin.type_)?;
 
             let mut cmd = StdCommand::new(&plugin_path);

@@ -62,7 +62,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install Android NDK ${{ matrix.ndk }}
-        uses: android-actions/setup-android@v3
+        uses: nttld/setup-ndk@v1
         with:
           ndk-version: ${{ matrix.ndk }}
 
