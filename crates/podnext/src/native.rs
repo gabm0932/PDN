@@ -3,6 +3,19 @@
 //! This module provides native implementations of all podnext commands
 //! using the Rust crates directly instead of wrapping proot-distro.
 
+/// Trace-only logging, off unless `PN_DEBUG` is set in the environment.
+///
+/// These lines were unconditional upstream and flooded real output — a single
+/// `backup create` emitted ~280 kB of DEBUG for one alpine container, and every
+/// command printed a DEBUG banner, burying the actual result. Enable with
+/// `PN_DEBUG=1` when diagnosing.
+macro_rules! pn_trace {
+    ($($arg:tt)*) => {
+        if ::std::env::var_os("PN_DEBUG").is_some() {
+            ::std::eprintln!($($arg)*);
+        }
+    };
+}
 use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
 use hex;
@@ -45,7 +58,10 @@ pub async fn search_docker_hub(query: &str, limit: usize) -> Result<Vec<DockerHu
 
     let response = client
         .get(&url)
-        .header("User-Agent", "podnext/0.1.0")
+        .header(
+            "User-Agent",
+            format!("podnext/{}", env!("CARGO_PKG_VERSION")),
+        )
         .send()
         .await
         .context("Failed to send search request")?;
@@ -147,6 +163,20 @@ pub async fn install_image_native(
     println!("Applying compatibility patches...");
     proot_compat::patch_rootfs(&rootfs)?;
 
+    // Step 4b: Set up guest network config files.
+    // Without /etc/resolv.conf the guest has no DNS at all (docker images
+    // ship none, and the host has none to inherit); `apk update` then fails
+    // with "temporary error". /etc/hosts is normalised the same way.
+    configure_guest_network(&rootfs, &container_name)?;
+
+    // Prepare the fake /proc stubs alongside the rootfs, so the container is
+    // complete before its first login. `login` regenerates `stat`/`uptime` for
+    // whatever CPU set the device has at that moment.
+    if let Some(container_dir) = rootfs.parent() {
+        proot_distro_core::sysdata::ensure(container_dir)?;
+        proot_distro_core::guestdirs::ensure(container_dir)?;
+    }
+
     // Step 5: Save container metadata
     save_container_metadata(&container_name, &name, &tag, &rootfs)?;
 
@@ -156,6 +186,46 @@ pub async fn install_image_native(
     println!("  podnext login {}", container_name);
 
     Ok(rootfs)
+}
+
+/// Write the guest's network configuration files.
+///
+/// Docker/OCI rootfs images ship no `/etc/resolv.conf`, and Termux has none to
+/// inherit, so a freshly installed PDN container had zero DNS: `apk update`
+/// died with "temporary error" and `getent`/`nslookup` failed. proot-distro
+/// solves this by writing resolv.conf at install time; we do the same.
+///
+/// Nameservers come from the host when it has any (Android's own resolver is
+/// not visible from Termux, so this rarely hits) and otherwise fall back to the
+/// public resolvers. `/etc/hosts` gets a minimal loopback entry plus the
+/// container's own hostname so `hostname`-based lookups resolve locally.
+fn configure_guest_network(rootfs: &Path, container_name: &str) -> Result<()> {
+    let etc = rootfs.join("etc");
+    fs::create_dir_all(&etc)?;
+
+    let resolv = etc.join("resolv.conf");
+    if !resolv.exists() {
+        let contents = "nameserver 8.8.8.8\nnameserver 8.8.4.4\nnameserver 1.1.1.1\n";
+        fs::write(&resolv, contents)?;
+    }
+
+    let hosts = etc.join("hosts");
+    if !hosts.exists() {
+        let contents = format!(
+            "127.0.0.1\tlocalhost localhost.localdomain\n\
+             ::1\t\tlocalhost localhost.localdomain\n\
+             127.0.0.1\t{}\n",
+            container_name
+        );
+        fs::write(&hosts, contents)?;
+    }
+
+    let hostname_file = etc.join("hostname");
+    if !hostname_file.exists() {
+        fs::write(&hostname_file, format!("{}\n", container_name))?;
+    }
+
+    Ok(())
 }
 
 fn parse_image_ref(image_ref: &str) -> Result<(String, String)> {
@@ -356,9 +426,10 @@ async fn download_layer(name: &str, digest: &str, token: &str) -> Result<Vec<u8>
 }
 
 fn extract_layer(data: &[u8], _media_type: &str, rootfs: &Path) -> Result<()> {
-    let mut archive = Archive::new(GzDecoder::new(data));
-    archive.unpack(rootfs)?;
-    Ok(())
+    // Not `archive.unpack()`: this device denies `link(2)`, so layers carrying
+    // hard links (Debian's perl, for one) abort the install. See the module
+    // docs in proot_distro_core::untar.
+    proot_distro_core::untar::extract(GzDecoder::new(data), rootfs)
 }
 
 fn save_container_metadata(
@@ -406,27 +477,27 @@ pub async fn login_container_native(
     user: Option<String>,
     command: Vec<String>,
 ) -> Result<()> {
-    eprintln!("[DEBUG native] Creating ProotDistroCore");
+    pn_trace!("[DEBUG native] Creating ProotDistroCore");
     let mut distro_core = proot_distro_core::ProotDistroCore::new()?;
-    eprintln!("[DEBUG native] ProotDistroCore created");
+    pn_trace!("[DEBUG native] ProotDistroCore created");
 
     let mut options = proot_distro_core::LoginOptions::default();
     options.container_name = container_name.to_string();
-    eprintln!("[DEBUG native] Default command: {:?}", options.command);
+    pn_trace!("[DEBUG native] Default command: {:?}", options.command);
     options.command = if command.is_empty() {
         vec!["/bin/sh".to_string()]
     } else {
         command
     };
-    eprintln!("[DEBUG native] Final command: {:?}", options.command);
+    pn_trace!("[DEBUG native] Final command: {:?}", options.command);
 
     if let Some(u) = user {
         options.user = Some(u);
     }
 
-    eprintln!("[DEBUG native] Calling login");
+    pn_trace!("[DEBUG native] Calling login");
     distro_core.login(options).await?;
-    eprintln!("[DEBUG native] Login completed");
+    pn_trace!("[DEBUG native] Login completed");
     Ok(())
 }
 
@@ -470,6 +541,25 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
     }
 
     container_mgr.remove(&name).await?;
+
+    // ContainerManager::remove() only drops the in-memory entry; the rootfs
+    // stayed on disk, so `remove` printed success while the container was
+    // still installed (and the next `install` said "already exists").
+    // Delete the on-disk container directory to make removal real.
+    if let Some(home) = dirs::home_dir() {
+        let dir = home.join(".podnext").join("containers").join(&name);
+        if dir.exists() {
+            fs::remove_dir_all(&dir).map_err(|e| {
+                anyhow::anyhow!(
+                    "removed '{}' from the index but failed to delete {}: {}",
+                    name,
+                    dir.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
     println!("Container '{}' removed.", name);
     Ok(())
 }

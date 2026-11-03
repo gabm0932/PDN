@@ -1,5 +1,18 @@
 //! PRoot Distro Core - Container management for PRoot
 
+/// Trace-only logging, off unless `PN_DEBUG` is set in the environment.
+///
+/// These lines were unconditional upstream and flooded real output — a single
+/// `backup create` emitted ~280 kB of DEBUG for one alpine container, and every
+/// command printed a DEBUG banner, burying the actual result. Enable with
+/// `PN_DEBUG=1` when diagnosing.
+macro_rules! pn_trace {
+    ($($arg:tt)*) => {
+        if ::std::env::var_os("PN_DEBUG").is_some() {
+            ::std::eprintln!($($arg)*);
+        }
+    };
+}
 pub mod bindings;
 pub mod compress;
 pub mod config;
@@ -7,6 +20,7 @@ pub mod constants;
 pub mod container;
 pub mod dirfd;
 pub mod gpu;
+pub mod guestdirs;
 pub mod guestfile;
 pub mod image;
 pub mod install;
@@ -23,6 +37,7 @@ pub mod shm;
 pub mod signature;
 pub mod storage;
 pub mod sysdata;
+pub mod untar;
 
 pub use bindings::{BindConfig, BindingManager};
 pub use compress::{CompressionFormat, Compressor};
@@ -65,7 +80,6 @@ pub use signature::{
     SignatureVerifier, TlogEntry, VerificationResult,
 };
 pub use storage::{StorageManager, VolumeConfig, VolumeInfo};
-pub use sysdata::SysdataManager;
 
 use anyhow::{bail, Result};
 
@@ -78,29 +92,26 @@ pub struct ProotDistroCore {
     config_manager: ConfigManager,
     session_manager: SessionManager,
     lock_manager: LockManager,
-    sysdata_manager: SysdataManager,
     shm_manager: ShmManager,
 }
 
 impl ProotDistroCore {
     pub fn new() -> Result<Self> {
-        eprintln!("[DEBUG new] Creating ContainerManager");
+        pn_trace!("[DEBUG new] Creating ContainerManager");
         let container_manager = ContainerManager::new()?;
-        eprintln!("[DEBUG new] Creating ImageManager");
+        pn_trace!("[DEBUG new] Creating ImageManager");
         let image_manager = ImageManager::new()?;
-        eprintln!("[DEBUG new] Creating NetworkManager");
+        pn_trace!("[DEBUG new] Creating NetworkManager");
         let network_manager = NetworkManager::new()?;
-        eprintln!("[DEBUG new] Creating StorageManager");
+        pn_trace!("[DEBUG new] Creating StorageManager");
         let storage_manager = StorageManager::new()?;
-        eprintln!("[DEBUG new] Creating ConfigManager");
+        pn_trace!("[DEBUG new] Creating ConfigManager");
         let config_manager = ConfigManager::new()?;
-        eprintln!("[DEBUG new] Creating SessionManager");
+        pn_trace!("[DEBUG new] Creating SessionManager");
         let session_manager = SessionManager::new()?;
-        eprintln!("[DEBUG new] Creating LockManager");
+        pn_trace!("[DEBUG new] Creating LockManager");
         let lock_manager = LockManager::new()?;
-        eprintln!("[DEBUG new] Creating SysdataManager");
-        let sysdata_manager = SysdataManager::new()?;
-        eprintln!("[DEBUG new] Creating ShmManager");
+        pn_trace!("[DEBUG new] Creating ShmManager");
         let shm_manager = ShmManager::new()?;
 
         Ok(Self {
@@ -111,7 +122,6 @@ impl ProotDistroCore {
             config_manager,
             session_manager,
             lock_manager,
-            sysdata_manager,
             shm_manager,
         })
     }
@@ -128,17 +138,17 @@ impl ProotDistroCore {
 
     pub async fn login(&mut self, options: LoginOptions) -> Result<()> {
         let container = self.container_manager.get(&options.container_name).await?;
-        eprintln!("[DEBUG login] Got container: {}", options.container_name);
-        eprintln!(
+        pn_trace!("[DEBUG login] Got container: {}", options.container_name);
+        pn_trace!(
             "[DEBUG login] Container rootfs: {:?}",
             container.rootfs_path
         );
         let session = self
             .session_manager
             .create(&options.container_name, &options)?;
-        eprintln!("[DEBUG login] Created session: {}", session.id);
+        pn_trace!("[DEBUG login] Created session: {}", session.id);
         self.lock_manager.acquire(&options.container_name)?;
-        eprintln!("[DEBUG login] Acquired lock");
+        pn_trace!("[DEBUG login] Acquired lock");
 
         // Execute proot interactively with the provided command
         let command = if options.command.is_empty() {
@@ -146,13 +156,13 @@ impl ProotDistroCore {
         } else {
             options.command
         };
-        eprintln!("[DEBUG login] Command: {:?}", command);
+        pn_trace!("[DEBUG login] Command: {:?}", command);
 
         let exit_code = self
             .container_manager
             .execute(&options.container_name, command)
             .await?;
-        eprintln!("[DEBUG login] Exit code: {}", exit_code);
+        pn_trace!("[DEBUG login] Exit code: {}", exit_code);
         if exit_code != 0 {
             bail!("Login shell exited with code {}", exit_code);
         }

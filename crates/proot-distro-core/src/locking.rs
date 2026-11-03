@@ -146,23 +146,25 @@ impl ContainerLock {
             .write(true)
             .open(&self.lock_file)?;
 
-        // Try to acquire lock
+        // Try to acquire lock.
+        //
+        // The descriptor to lock is `file`, just opened. This used to be
+        // `self.file.as_ref().unwrap()`, but `self.file` is only assigned below
+        // — so the first call panicked on `Option::unwrap()` and no container
+        // operation could ever take a lock.
         let result = unsafe {
             if self.exclusive {
-                libc::flock(
-                    self.file.as_ref().unwrap().as_raw_fd(),
-                    libc::LOCK_EX | libc::LOCK_NB,
-                )
+                libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
             } else {
-                libc::flock(
-                    self.file.as_ref().unwrap().as_raw_fd(),
-                    libc::LOCK_SH | libc::LOCK_NB,
-                )
+                libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB)
             }
         };
 
         if result != 0 {
-            return Err(anyhow::anyhow!("Failed to acquire lock"));
+            return Err(anyhow::anyhow!(
+                "Failed to acquire lock: {} is held by another process",
+                self.lock_file.display()
+            ));
         }
 
         self.file = Some(file);

@@ -3,6 +3,19 @@
 //! A ptrace-based chroot, mount --bind, and binfmt_misc implementation
 //! without privilege/setup for Linux. Compatible with Termux Android 16+.
 
+/// Trace-only logging, off unless `PN_DEBUG` is set in the environment.
+///
+/// These lines were unconditional upstream and flooded real output — a single
+/// `backup create` emitted ~280 kB of DEBUG for one alpine container, and every
+/// command printed a DEBUG banner, burying the actual result. Enable with
+/// `PN_DEBUG=1` when diagnosing.
+macro_rules! pn_trace {
+    ($($arg:tt)*) => {
+        if ::std::env::var_os("PN_DEBUG").is_some() {
+            ::std::eprintln!($($arg)*);
+        }
+    };
+}
 pub mod arch;
 pub mod cli;
 pub mod compat;
@@ -33,6 +46,48 @@ use anyhow::Result;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::process::Command;
+
+/// Resolve the proot binary to an absolute path.
+///
+/// Required once the child environment is cleared: Rust's Unix `Command`
+/// searches a bare program name in the *child's* PATH, so the plain name
+/// "proot" would no longer be found once PATH is the guest's.
+fn proot_binary() -> String {
+    if let Ok(explicit) = std::env::var("PROOT_BIN") {
+        if !explicit.is_empty() {
+            return explicit;
+        }
+    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    for dir in path.split(':').filter(|d| !d.is_empty()) {
+        let candidate = std::path::Path::new(dir).join("proot");
+        if candidate.is_file() {
+            return candidate.to_string_lossy().into_owned();
+        }
+    }
+    "proot".to_string()
+}
+
+/// POSIX single-quote a string so an inner `/bin/sh -c` sees it as one word.
+///
+/// Naive `args.join(" ")` corrupts quoting: `login alpine -- /bin/sh -c 'echo X'`
+/// became `/bin/sh -c /bin/sh -c echo X`, and the inner `-c` ate a word.
+/// Mirrors Python's `shlex.quote`.
+fn sh_quote(s: &str) -> String {
+    let safe = !s.is_empty()
+        && s.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b',' | b'='
+                )
+        });
+    if safe {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
 
 /// Main PRoot engine
 #[derive(Clone)]
@@ -80,37 +135,161 @@ impl ProotEngine {
         )
     }
 
+    /// Add Android/Termux system binds required for dynamic linker to work
+    fn add_android_system_binds(cmd: &mut Command) {
+        // Android system directories - required for dynamic linker
+        cmd.arg("--bind=/apex");
+        cmd.arg("--bind=/odm");
+        cmd.arg("--bind=/product");
+        cmd.arg("--bind=/system");
+        cmd.arg("--bind=/system_ext");
+        cmd.arg("--bind=/vendor");
+
+        // Linker config - required for dynamic linker
+        cmd.arg("--bind=/linkerconfig/ld.config.txt");
+        cmd.arg("--bind=/linkerconfig/com.android.art/ld.config.txt");
+
+        // Termux prefix - required for Termux utilities
+        if let Ok(prefix) = std::env::var("TERMUX_PREFIX") {
+            cmd.arg(format!("--bind={}", prefix));
+        } else {
+            cmd.arg("--bind=/data/data/com.termux/files/usr");
+        }
+
+        // Android dalvik/ART caches
+        for cache_dir in &[
+            "/data/app",
+            "/data/dalvik-cache",
+            "/data/misc/apexdata/com.android.art/dalvik-cache",
+        ] {
+            if std::path::Path::new(cache_dir).exists() {
+                cmd.arg(format!("--bind={}", cache_dir));
+            }
+        }
+
+        // Storage binds (if available)
+        for storage_dir in &["/storage/self/primary", "/sdcard", "/storage/emulated/0"] {
+            if std::path::Path::new(storage_dir).exists() {
+                cmd.arg(format!("--bind={}", storage_dir));
+            }
+        }
+
+        // Termux app directories
+        if let Ok(home) = std::env::var("HOME") {
+            cmd.arg(format!("--bind={}", home));
+        }
+        if let Ok(cache) = std::env::var("TERMUX_PREFIX") {
+            let termux_cache = format!("{}/tmp", cache);
+            if std::path::Path::new(&termux_cache).exists() {
+                cmd.arg(format!("--bind={}", termux_cache));
+            }
+        }
+    }
+
+    /// Start a daemon process (background mode)
     pub async fn start(&mut self) -> Result<u32> {
         // Initialize seccomp filter
         self.seccomp_filter.lock().install()?;
 
-        // Build the command to execute
-        let mut cmd = Command::new(&self.config.command[0]);
-        if self.config.command.len() > 1 {
-            cmd.args(&self.config.command[1..]);
+        // Build the proot command for proper isolation
+        // Note: Use only options supported by the system proot binary (5.1.107.101)
+        // IMPORTANT: proot requires --rootfs=. with cwd set to rootfs for proper isolation
+        let proot_bin = proot_binary();
+        let mut cmd = Command::new(&proot_bin);
+
+        // Proot extensions for Termux/Android (supported by this proot version)
+        cmd.arg("--kill-on-exit");
+        cmd.arg("--link2symlink");
+        cmd.arg("--sysvipc");
+        cmd.arg("-L"); // Fix lstat for dpkg symlink warnings
+
+        // Present uid/gid 0 inside the guest.
+        //
+        // Without this the guest keeps the real Android app uid and every
+        // privileged operation fails at the first check: `apt-get install`
+        // aborts with `dpkg: error: requested operation requires superuser
+        // privilege`, and `chown`/`passwd`/`useradd` refuse too, which is what
+        // blocked node, playwright and any package install in a Debian
+        // container. proot-distro passes exactly this for non-termux
+        // containers (proot_cmd.py:105, `--change-id={login_uid}:{login_gid}`,
+        // defaulting to 0:0).
+        //
+        // It is still a user-space illusion: proot maps ids for the traced
+        // process only, no real privilege is gained.
+        cmd.arg("--change-id=0:0");
+
+        // Root filesystem - critical for isolation
+        // Use --rootfs=. with cwd set to rootfs (like proot-distro does)
+        let rootfs = self
+            .config
+            .rootfs
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Rootfs not configured"))?;
+        cmd.arg("--rootfs=.");
+        cmd.current_dir(rootfs);
+
+        // Working directory inside guest rootfs
+        if let Some(cwd) = &self.config.cwd {
+            cmd.arg(format!("--cwd={}", cwd.display()));
         }
 
-        // Set up environment
+        // Essential virtual filesystem binds for isolation
+        cmd.arg("--bind=/dev");
+        cmd.arg("--bind=/proc");
+        cmd.arg("--bind=/sys");
+
+        // Android/Termux system binds required for dynamic linker
+        Self::add_android_system_binds(&mut cmd);
+
+        // Environment variables — allow-listed guest env (see execute()).
+        cmd.env_clear();
+        cmd.env(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        );
+        cmd.env("HOME", "/root");
+        cmd.env("TERM", "xterm-256color");
+        for passthrough in ["LANG", "LC_ALL", "COLORTERM"] {
+            if let Ok(v) = std::env::var(passthrough) {
+                cmd.env(passthrough, v);
+            }
+        }
         for env in &self.config.env {
             if let Some((k, v)) = env.split_once('=') {
                 cmd.env(k, v);
             }
         }
 
-        // Set working directory
-        if let Some(cwd) = &self.config.cwd {
-            cmd.current_dir(cwd);
+        // Additional bind mounts from config
+        for bind in &self.config.bind {
+            cmd.arg(format!("--bind={}", bind));
         }
 
-        // Set up bind mounts (would need to be done via ptrace)
-        // For now, we'll just spawn the process
+        // Command to execute
+        if self.config.command.is_empty() {
+            return Err(anyhow::anyhow!("No command specified"));
+        }
+        cmd.arg(&self.config.command[0]);
+        if self.config.command.len() > 1 {
+            cmd.args(&self.config.command[1..]);
+        }
+
+        // Debug output
+        if self.config.verbose > 0 {
+            pn_trace!("[DEBUG] Starting proot command: {:?}", cmd);
+            pn_trace!("[DEBUG] Rootfs: {:?}", rootfs);
+            pn_trace!("[DEBUG] Env: {:?}", self.config.env);
+        }
+
+        // Spawn the process (daemon mode)
         let child = cmd.spawn()?;
         let pid = child
             .id()
             .ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
 
-        // In a real implementation, we would ptrace the child process
-        // and set up the chroot environment before it runs
+        if self.config.verbose > 0 {
+            pn_trace!("[DEBUG] Started daemon PID: {}", pid);
+        }
 
         Ok(pid)
     }
@@ -120,32 +299,117 @@ impl ProotEngine {
         // Initialize seccomp filter
         self.seccomp_filter.lock().install()?;
 
-        // Build the command to execute
-        let mut cmd = Command::new(&self.config.command[0]);
-        if self.config.command.len() > 1 {
-            cmd.args(&self.config.command[1..]);
+        // Build the proot command for proper isolation
+        // Note: Use only options supported by the system proot binary (5.1.107.101)
+        // IMPORTANT: proot requires --rootfs=. with cwd set to rootfs for proper isolation
+        // Also, run commands through the shell like proot-distro does
+        let proot_bin = proot_binary();
+        let mut cmd = Command::new(&proot_bin);
+
+        // Proot extensions for Termux/Android (supported by this proot version)
+        cmd.arg("--kill-on-exit");
+        cmd.arg("--link2symlink");
+        cmd.arg("--sysvipc");
+        cmd.arg("-L"); // Fix lstat for dpkg symlink warnings
+
+        // Present uid/gid 0 inside the guest.
+        //
+        // Without this the guest keeps the real Android app uid and every
+        // privileged operation fails at the first check: `apt-get install`
+        // aborts with `dpkg: error: requested operation requires superuser
+        // privilege`, and `chown`/`passwd`/`useradd` refuse too, which is what
+        // blocked node, playwright and any package install in a Debian
+        // container. proot-distro passes exactly this for non-termux
+        // containers (proot_cmd.py:105, `--change-id={login_uid}:{login_gid}`,
+        // defaulting to 0:0).
+        //
+        // It is still a user-space illusion: proot maps ids for the traced
+        // process only, no real privilege is gained.
+        cmd.arg("--change-id=0:0");
+
+        // Root filesystem - critical for isolation
+        // Use --rootfs=. with cwd set to rootfs (like proot-distro does)
+        let rootfs = self
+            .config
+            .rootfs
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Rootfs not configured"))?;
+        cmd.arg("--rootfs=.");
+        cmd.current_dir(rootfs);
+
+        // Working directory inside guest rootfs
+        if let Some(cwd) = &self.config.cwd {
+            cmd.arg(format!("--cwd={}", cwd.display()));
         }
 
-        // Debug: print command
-        if self.config.verbose > 0 {
-            eprintln!("[DEBUG] Executing command: {:?}", self.config.command);
-            eprintln!("[DEBUG] CWD: {:?}", self.config.cwd);
-            eprintln!("[DEBUG] Env: {:?}", self.config.env);
-        }
+        // Essential virtual filesystem binds for isolation
+        cmd.arg("--bind=/dev");
+        cmd.arg("--bind=/proc");
+        cmd.arg("--bind=/sys");
 
-        // Set up environment
+        // Android/Termux system binds required for dynamic linker
+        Self::add_android_system_binds(&mut cmd);
+
+        // Environment variables
+        //
+        // The container gets a clean, allow-listed environment — not the host's.
+        // Passing the host env through (the previous behaviour) leaked live
+        // secrets (`*_API_KEY`) into the guest and broke every musl binary:
+        // Termux's LD_PRELOAD (libtermux-exec) and LD_LIBRARY_PATH are host-ABI
+        // and cause "relocation error" + exit 127 for apk/busybox/getent.
+        // proot-distro builds the guest env from scratch (env -i) for the same
+        // reasons. Verified: after this, `login alpine -- apk --version` prints
+        // "apk-tools 3.0.8-r0" and the guest no longer sees host secrets.
+        cmd.env_clear();
+        cmd.env(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        );
+        cmd.env("HOME", "/root");
+        cmd.env("TERM", "xterm-256color");
+        for passthrough in ["LANG", "LC_ALL", "COLORTERM"] {
+            if let Ok(v) = std::env::var(passthrough) {
+                cmd.env(passthrough, v);
+            }
+        }
         for env in &self.config.env {
             if let Some((k, v)) = env.split_once('=') {
                 cmd.env(k, v);
             }
         }
 
-        // Set working directory
-        if let Some(cwd) = &self.config.cwd {
-            cmd.current_dir(cwd);
+        // Additional bind mounts from config
+        for bind in &self.config.bind {
+            cmd.arg(format!("--bind={}", bind));
         }
 
-        // For now, we'll just spawn the process and wait
+        // Command to execute - run through shell like proot-distro does
+        // This ensures PATH resolution and symlink handling works correctly.
+        // Each argv element is quoted individually so the inner shell sees
+        // exactly the words the caller passed.
+        if self.config.command.is_empty() {
+            return Err(anyhow::anyhow!("No command specified"));
+        }
+        let shell = "/bin/sh";
+        let command_str = self
+            .config
+            .command
+            .iter()
+            .map(|a| sh_quote(a))
+            .collect::<Vec<_>>()
+            .join(" ");
+        cmd.arg(shell);
+        cmd.arg("-c");
+        cmd.arg(command_str);
+
+        // Debug output
+        if self.config.verbose > 0 {
+            pn_trace!("[DEBUG] Executing proot command: {:?}", cmd);
+            pn_trace!("[DEBUG] Rootfs: {:?}", rootfs);
+            pn_trace!("[DEBUG] Env: {:?}", self.config.env);
+        }
+
+        // Spawn and wait for completion
         let mut child = cmd
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
@@ -155,17 +419,16 @@ impl ProotEngine {
             .id()
             .ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
         if self.config.verbose > 0 {
-            eprintln!("[DEBUG] Spawned PID: {}", pid);
+            pn_trace!("[DEBUG] Spawned PID: {}", pid);
         }
 
-        // Wait for the process to complete and get exit code
         let exit_status = child.wait().await?;
         if self.config.verbose > 0 {
-            eprintln!("[DEBUG] Exit status: {:?}", exit_status);
+            pn_trace!("[DEBUG] Exit status: {:?}", exit_status);
         }
         let exit_code = exit_status.code().unwrap_or(-1);
         if self.config.verbose > 0 {
-            eprintln!("[DEBUG] Exit code: {}", exit_code);
+            pn_trace!("[DEBUG] Exit code: {}", exit_code);
         }
 
         Ok(exit_code)

@@ -55,12 +55,26 @@ impl ContainerManager {
             let metadata_path = entry.path().join("metadata.json");
             if metadata_path.exists() {
                 if let Ok(metadata_str) = std::fs::read_to_string(&metadata_path) {
-                    if let Ok(_metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str)
-                    {
+                    if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str) {
                         let rootfs_path = entry.path().join("rootfs");
                         if rootfs_path.exists() {
+                            // metadata.json carries the image identity written at
+                            // install time. Defaulting it away made every row read
+                            // "ubuntu 22.04" regardless of what was installed.
+                            let distro = metadata
+                                .get("image")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let version = metadata
+                                .get("tag")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("latest")
+                                .to_string();
                             let config = ContainerConfig {
                                 name: name.clone(),
+                                distro,
+                                version,
                                 rootfs_path: Some(rootfs_path),
                                 ..Default::default()
                             };
@@ -168,6 +182,22 @@ impl ContainerManager {
                     )
                 })
                 .collect();
+
+            // Same fake /proc stubs as the interactive path (see execute).
+            if let Some(container_dir) = container.rootfs_path.parent() {
+                if crate::sysdata::ensure(container_dir).is_ok() {
+                    engine_guard
+                        .config
+                        .bind
+                        .extend(crate::sysdata::bindings(container_dir));
+                }
+                if crate::guestdirs::ensure(container_dir).is_ok() {
+                    engine_guard
+                        .config
+                        .bind
+                        .extend(crate::guestdirs::bindings(container_dir));
+                }
+            }
             engine_guard.config.cwd = Some(
                 container
                     .config
@@ -264,6 +294,28 @@ impl ContainerManager {
                 )
             })
             .collect();
+
+        // Fake /proc entries. Android blocks /proc/uptime, /proc/stat,
+        // /proc/version and others, so guest tools (top, htop, free, uptime)
+        // read nothing. Bind static stubs over them, from
+        // <container_dir>/sysdata/ — a sibling of the rootfs. Appended after
+        // the container's own binds so these win.
+        if let Some(container_dir) = container.rootfs_path.parent() {
+            if crate::sysdata::ensure(container_dir).is_ok() {
+                engine_guard
+                    .config
+                    .bind
+                    .extend(crate::sysdata::bindings(container_dir));
+            }
+            // `--bind=/dev` masks the rootfs' own dev/, so the guest needs a
+            // real /dev/shm bound in (Chromium and anything using POSIX shm).
+            if crate::guestdirs::ensure(container_dir).is_ok() {
+                engine_guard
+                    .config
+                    .bind
+                    .extend(crate::guestdirs::bindings(container_dir));
+            }
+        }
         engine_guard.config.cwd = Some(
             container
                 .config

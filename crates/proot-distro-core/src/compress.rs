@@ -164,35 +164,26 @@ impl Compressor {
         Ok(())
     }
 
+    // Extraction goes through `untar::extract`, not `Archive::unpack`: this
+    // device denies `link(2)`, so archives containing hard links would fail.
     fn extract_tar(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        let mut archive = Archive::new(input_file);
-        archive.unpack(output)?;
-        Ok(())
+        crate::untar::extract(input_file, output)
     }
 
     fn extract_tar_gz(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        let decoder = GzDecoder::new(BufReader::new(input_file));
-        let mut archive = Archive::new(decoder);
-        archive.unpack(output)?;
-        Ok(())
+        crate::untar::extract(GzDecoder::new(BufReader::new(input_file)), output)
     }
 
     fn extract_tar_bz2(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        let decoder = BzDecoder::new(BufReader::new(input_file));
-        let mut archive = Archive::new(decoder);
-        archive.unpack(output)?;
-        Ok(())
+        crate::untar::extract(BzDecoder::new(BufReader::new(input_file)), output)
     }
 
     fn extract_tar_xz(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        let decoder = XzDecoder::new(BufReader::new(input_file));
-        let mut archive = Archive::new(decoder);
-        archive.unpack(output)?;
-        Ok(())
+        crate::untar::extract(XzDecoder::new(BufReader::new(input_file)), output)
     }
 }
 
