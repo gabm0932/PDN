@@ -184,8 +184,78 @@ podnext remove <CONTAINER> [OPTIONS]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--force` | Force remove running container |
-| `--volumes` | Also remove associated volumes |
+| `--force` (`-f`) | Force remove container without confirmation |
+
+### `podnext rename`
+
+Rename an installed container in its metadata and filesystem.
+
+```bash
+podnext rename <OLD_NAME> <NEW_NAME>
+```
+
+**Examples:**
+```bash
+podnext rename debian deb-production
+```
+
+### `podnext copy`
+
+Copy files or directories between the host and containers. Paths take the form `[CONTAINER:]PATH`. A path without a container prefix is treated as a host path. Path traversals (e.g., `..`) are strictly verified and rejected.
+
+```bash
+podnext copy <SOURCE> <DESTINATION> [OPTIONS]
+```
+
+**Options:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--recursive` | `-R` | Copy directories recursively |
+| `--move` | `-m` | Remove the source after successful transfer |
+
+**Examples:**
+```bash
+# Copy a file from container to host
+podnext copy debian:/etc/resolv.conf ./resolv.conf
+
+# Copy a directory recursively from host to container
+podnext copy ./my-app debian:/opt/my-app -R
+
+# Move a file from container to host
+podnext copy debian:/var/log/app.log ./app.log -m
+```
+
+### `podnext sync`
+
+Mirror files between host and containers using content hashing (SHA256). Only differing files are transferred, so subsequent runs are zero-overhead no-ops.
+
+```bash
+podnext sync <SOURCE> <DESTINATION> [OPTIONS]
+```
+
+**Options:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--delete` | `-d` | Remove destination entries that do not exist in source |
+
+**Examples:**
+```bash
+# Mirror directory to container and delete deleted files
+podnext sync ./src debian:/root/src -d
+```
+
+### `podnext reset`
+
+Reset an installed container to a clean install of the original OCI image it came from. Deletes current rootfs modifications and reinstalls cleanly.
+
+```bash
+podnext reset <CONTAINER>
+```
+
+**Examples:**
+```bash
+podnext reset debian
+```
 
 ## Image Commands
 
@@ -393,6 +463,39 @@ Features:
   AppArmor: ✗
   SELinux: ✗
   Cgroups v2: ✓
+```
+
+### `podnext dbus`
+
+Manage D-Bus IPC broker and service forwarder.
+
+```bash
+# Start standalone D-Bus broker on a specific UNIX socket
+podnext dbus serve --socket /tmp/pn-dbus.sock
+
+# List registered D-Bus services
+podnext dbus list --socket /tmp/pn-dbus.sock
+
+# Call a method over D-Bus
+podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service.GetStatus --socket /tmp/pn-dbus.sock
+```
+
+### `podnext gitops`
+
+Declarative application lifecycle management and reconciliation.
+
+```bash
+# Sync applications and volumes from declarative YAML manifests
+podnext gitops sync --repo ./manifests
+
+# Show GitOps synchronization status
+podnext gitops status
+
+# Inspect configuration drift against desired state
+podnext gitops drift
+
+# Reconcile drifts and enforce state
+podnext gitops reconcile
 ```
 
 ### `podnext version`

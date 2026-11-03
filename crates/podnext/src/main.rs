@@ -62,63 +62,63 @@ use proot_distro_core::storage::VolumeConfig;
 
 #[derive(Parser)]
 #[command(name = "podnext")]
-#[command(about = "PRoot Distro Next - Advanced container & service management for Termux/Android")]
+#[command(
+    about = "PRoot Distro Next (PDN) - Fast, isolated container and service orchestration for Termux/Android"
+)]
 #[command(version)]
 #[command(
-    long_about = "podnext (PRoot Distro Next) - Advanced container & service management for Termux/Android.\n\n\
-    CONTAINER MANAGEMENT:\n\
-    podnext install ubuntu:22.04              # Install Ubuntu 22.04\n\
-    podnext login ubuntu                      # Interactive shell\n\
-    podnext run ubuntu -- apt update          # Run command in container\n\
-    podnext list                              # List containers\n\
-    podnext remove ubuntu                     # Delete container\n\n\
-    SERVICE ORCHESTRATION (v2.0):\n\
-    podnext service start web-server          # Start managed service\n\
-    podnext service stop web-server           # Stop managed service\n\
-    podnext service restart web-server        # Restart service\n\
-    podnext service list                      # List all services\n\
-    podnext service logs web-server           # View service logs\n\
-    podnext service status web-server         # Show service status\n\
-    podnext service enable web-server         # Enable auto-start at boot\n\
-    podnext service disable web-server        # Disable auto-start\n\n\
-    DAEMON MANAGEMENT:\n\
-    podnext daemon start                      # Start service daemon\n\
-    podnext daemon stop                       # Stop service daemon\n\
-    podnext daemon status                     # Show daemon status\n\
-    podnext daemon reload                     # Reload configuration\n\n\
-    WATCHDOG & MONITORING:\n\
-    podnext watchdog status                   # Show watchdog status\n\
-    podnext watchdog policy set web-server OnFailure 3 60\n\
-    podnext watchdog reset web-server         # Reset watchdog state\n\n\
-    RESOURCE QUOTAS:\n\
-    podnext quota set web-server memory 512M  # Set memory limit\n\
-    podnext quota set web-server cpu 200      # Set CPU quota (2 cores)\n\
-    podnext quota get web-server              # Show quotas\n\
-    podnext quota usage web-server            # Show current usage\n\n\
-    STRUCTURED LOGGING:\n\
-    podnext log query web-server --level Error --limit 50\n\
-    podnext log tail web-server               # Follow logs\n\
-    podnext log stats                         # Log statistics\n\n\
-    D-BUS & IPC:\n\
-    podnext dbus list                         # List D-Bus services\n\
-    podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service.List\n\n\
-    SOCKET ACTIVATION:\n\
-    podnext socket register --config socket.toml\n\
-    podnext socket list\n\n\
-    TERMUX:BOOT:\n\
-    podnext boot enable web-server            # Enable auto-start at boot\n\
-    podnext boot disable web-server           # Disable auto-start\n\
-    podnext boot status                       # Show boot configuration\n\n\
-    WAKE LOCKS:\n\
-    podnext wakelock acquire web-server Partial\n\
-    podnext wakelock release web-server\n\
-    podnext wakelock status\n\n\
-    POLICY ENGINE:\n\
-    podnext policy eval web-server --json\n\
-    podnext policy list\n\n\
-    DIRECT EXECUTION (like proot):\n\
-    podnext -r /path/to/rootfs -- /bin/bash     # Execute in proot environment\n\
-    podnext -b /host/path:/guest/path -- ls     # Bind mount and execute\n"
+    long_about = "podnext (PRoot Distro Next) - Next-generation container & service orchestration platform.\n\n\
+    ========================================================================\n\
+    1. SIMPLE & CORE DISTRO USAGE (Pengganti proot-distro sehari-hari):\n\
+    ========================================================================\n\
+    podnext install debian:13                 # Pasang distro Debian 13 trixie\n\
+    podnext login debian                      # Masuk ke shell interaktif container\n\
+    podnext run debian -- apt update          # Jalankan perintah langsung di container\n\
+    podnext list                              # Tampilkan daftar container terpasang\n\
+    podnext copy debian:/etc/hosts ./hosts    # Salin berkas/folder host <-> container\n\
+    podnext sync ./src debian:/root/src -d    # Sinkronisasi direktori (hashing sha256 + prune)\n\
+    podnext rename debian deb-prod            # Ganti nama container terpasang\n\
+    podnext reset deb-prod                    # Reset container ke instalasi bersih semula\n\
+    podnext remove deb-prod                   # Hapus container beserta datanya\n\
+    podnext search debian                     # Cari OCI image di Docker Hub\n\
+    podnext info                              # Tampilkan informasi sistem & host kernel\n\n\
+    ========================================================================\n\
+    2. INTERMEDIATE: IMAGES, STORAGE, VOLUMES & BACKUP:\n\
+    ========================================================================\n\
+    podnext image ls                          # Tampilkan cache image lokal\n\
+    podnext image pull alpine:latest          # Unduh image OCI dari registry\n\
+    podnext volume create my-vol              # Buat volume penyimpanan persisten\n\
+    podnext volume ls                         # Tampilkan daftar volume\n\
+    podnext volume prune                      # Bersihkan volume tak terpakai\n\
+    podnext network create isolated-net       # Buat jaringan bridge terisolasi\n\
+    podnext network ls                        # Tampilkan jaringan container\n\
+    podnext backup create debian              # Buat arsip snapshot container (tar.gz)\n\
+    podnext backup list                       # Tampilkan daftar snapshot cadangan\n\
+    podnext backup restore <id> --target deb2 # Pulihkan container dari backup\n\n\
+    ========================================================================\n\
+    3. ADVANCED: SYSTEM SERVICES, DAEMON & SUPERVISOR:\n\
+    ========================================================================\n\
+    podnext daemon start                      # Jalankan supervisor daemon PDN\n\
+    podnext daemon status                     # Periksa status daemon supervisor\n\
+    podnext service start web-srv             # Jalankan managed service (dengan restart policy)\n\
+    podnext service status web-srv            # Tampilkan status & PID service\n\
+    podnext service logs web-srv              # Tampilkan log service\n\
+    podnext quota set web-srv memory 512M     # Terapkan kuota cgroup memory\n\
+    podnext quota set web-srv cpu 200         # Terapkan batas kuota CPU (2 cores)\n\
+    podnext quota usage web-srv               # Pantau utilisasi resource real-time\n\
+    podnext watchdog status                   # Pantau circuit breaker & watchdog\n\
+    podnext log tail web-srv                  # Streaming log secara real-time\n\
+    podnext dbus serve --socket /tmp/d.sock   # Jalankan D-Bus broker IPC\n\
+    podnext dbus call ...                     # Kirim panggilan method D-Bus\n\
+    podnext gitops sync                       # Sinkronisasi deklaratif GitOps manifests\n\
+    podnext gitops status                     # Status sinkronisasi aplikasi GitOps\n\
+    podnext boot enable web-srv               # Pasang auto-start saat Termux boot\n\
+    podnext wakelock acquire web-srv Partial  # Ambil Android wake lock agar tetap aktif\n\n\
+    ========================================================================\n\
+    4. DIRECT EXECUTION MODE (Kompatibilitas murni seperti biner proot):\n\
+    ========================================================================\n\
+    podnext -r /path/to/rootfs -- /bin/bash    # Jalankan rootfs kustom secara langsung\n\
+    podnext -b /host/dir:/guest/dir -- ls      # Bind mount direktori host langsung\n"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -232,8 +232,10 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum Commands {
-    // Container management (existing)
-    /// Install distribution from OCI image
+    // ------------------------------------------------------------------------
+    // TIER 1: CORE DISTRO COMMANDS (Simple & Daily Usage - proot-distro parity)
+    // ------------------------------------------------------------------------
+    /// [Core] Install distribution from OCI image
     Install {
         /// Image reference (e.g., ubuntu:22.04, debian:12, alpine:latest)
         image: String,
@@ -245,7 +247,7 @@ enum Commands {
         force: bool,
     },
 
-    /// List created containers
+    /// [Core] List created containers
     List {
         /// Show all (including stopped)
         #[arg(short = 'a', long, default_value = "true")]
@@ -258,7 +260,7 @@ enum Commands {
         format: OutputFormat,
     },
 
-    /// Start interactive shell inside a container
+    /// [Core] Start interactive shell inside a container
     Login {
         /// Container name
         container: String,
@@ -270,7 +272,7 @@ enum Commands {
         command: Vec<String>,
     },
 
-    /// Run command in container
+    /// [Core] Run command in container
     Run {
         /// Container name
         container: String,
@@ -322,20 +324,20 @@ enum Commands {
         workdir: Option<String>,
     },
 
-    /// List active sessions
+    /// [Container] List active sessions
     Ps {
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
 
-    /// Stop container
+    /// [Container] Stop container
     Kill {
         /// Container name
         container: String,
     },
 
-    /// Delete a container
+    /// [Core] Delete a container
     Remove {
         /// Container name
         name: String,
@@ -344,7 +346,7 @@ enum Commands {
         force: bool,
     },
 
-    /// Rename an installed container
+    /// [Core] Rename an installed container
     Rename {
         /// Current container name
         oldname: String,
@@ -352,7 +354,7 @@ enum Commands {
         newname: String,
     },
 
-    /// Copy or move files between host and containers
+    /// [Core] Copy files or directories between host and containers
     ///
     /// Paths are `[CONTAINER:]PATH`; a path without a container prefix is the
     /// host's.
@@ -369,7 +371,7 @@ enum Commands {
         move_: bool,
     },
 
-    /// Reset a container to a clean install of the image it came from
+    /// [Core] Reset a container to a clean install of the image it came from
     ///
     /// Deletes the container directory and reinstalls it. All data inside the
     /// container is lost, as with proot-distro's `reset`.
@@ -378,7 +380,7 @@ enum Commands {
         name: String,
     },
 
-    /// Mirror files between host and containers
+    /// [Core] Mirror files between host and containers (content hashing sha256)
     ///
     /// Like `copy`, but only the differences move: a file is transferred when its
     /// content differs, so a second run is a no-op. Paths are `[CONTAINER:]PATH`.
@@ -392,7 +394,7 @@ enum Commands {
         delete: bool,
     },
 
-    /// Search images on Docker Hub
+    /// [Core] Search images on Docker Hub
     Search {
         /// Search query
         query: String,
@@ -404,18 +406,18 @@ enum Commands {
         format: OutputFormat,
     },
 
-    /// Manage images
+    /// [Container] Manage OCI images and local cache
     #[command(subcommand)]
     Image(ImageCommands),
 
-    /// List active sessions (better formatted)
+    /// [Container] List active sessions (detailed)
     Sessions {
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
 
-    /// Attach to a container session (creates new session)
+    /// [Container] Attach to a container session (creates new session)
     Attach {
         /// Container name
         container: String,
@@ -426,7 +428,7 @@ enum Commands {
         command: Vec<String>,
     },
 
-    /// Show system information
+    /// [Core] Show system information
     #[command(name = "info")]
     Info {
         /// Output format
@@ -434,7 +436,7 @@ enum Commands {
         format: OutputFormat,
     },
 
-    /// Show version
+    /// [Core] Show version
     #[command(name = "version")]
     Version {
         /// Output format
@@ -442,72 +444,74 @@ enum Commands {
         format: OutputFormat,
     },
 
-    // Service orchestration (v2.0)
-    /// Service management commands
+    // ------------------------------------------------------------------------
+    // TIER 2 & 3: ADVANCED SYSTEM SERVICES & ORCHESTRATION
+    // ------------------------------------------------------------------------
+    /// [System] Service management commands (supervision & lifecycle)
     #[command(subcommand)]
     Service(ServiceCommands),
 
-    /// Daemon management
+    /// [System] Daemon management (background supervisor process)
     #[command(subcommand)]
     Daemon(DaemonCommands),
 
-    /// Watchdog management
+    /// [System] Watchdog management & circuit breaker
     #[command(subcommand)]
     Watchdog(WatchdogCommands),
 
-    /// Resource quota management
+    /// [System] Resource quota management (memory/cpu cgroups)
     #[command(subcommand)]
     Quota(QuotaCommands),
 
-    /// Structured logging
+    /// [System] Structured logging & real-time streaming
     #[command(subcommand)]
     Log(LogCommands),
 
-    /// D-Bus IPC
+    /// [System] D-Bus IPC & service brokering
     #[command(subcommand)]
     Dbus(DbusCommands),
 
-    /// Socket activation
+    /// [System] Socket activation (listen on host, wake container on demand)
     #[command(subcommand)]
     Socket(SocketCommands),
 
-    /// Termux:Boot integration
+    /// [System] Termux:Boot integration for background autostart
     #[command(subcommand)]
     Boot(BootCommands),
 
-    /// Wake lock management
+    /// [System] Wake lock management (prevent Android sleep)
     #[command(subcommand)]
     Wakelock(WakelockCommands),
 
-    /// Policy engine
+    /// [System] Policy engine (RBAC & capability limits)
     #[command(subcommand)]
     Policy(PolicyCommands),
 
-    /// Backup/Restore management
+    /// [Storage] Backup/Restore management (container snapshots)
     #[command(subcommand)]
     Backup(BackupCommands),
 
-    /// Multi-arch build service
+    /// [Advanced] Multi-arch build service
     #[command(subcommand)]
     Build(BuildCommands),
 
-    /// GitOps integration
+    /// [System] GitOps integration (declarative YAML sync & reconciliation)
     #[command(subcommand)]
     Gitops(GitopsCommands),
 
-    /// Web dashboard management
+    /// [System] Web dashboard management
     #[command(subcommand)]
     Dashboard(DashboardCommands),
 
-    /// Network management
+    /// [Storage] Network management (isolated bridge networks)
     #[command(subcommand)]
     Network(NetworkCommands),
 
-    /// Volume management
+    /// [Storage] Volume management (persistent data volumes)
     #[command(subcommand)]
     Volume(VolumeCommands),
 
-    /// Generate shell completions
+    /// [Core] Generate shell completions
     Completion {
         /// Shell to generate completions for
         #[arg(value_enum)]

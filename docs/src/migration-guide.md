@@ -7,12 +7,16 @@ This guide helps you migrate from the traditional `proot-distro` shell scripts t
 | Aspect | PRoot-distro | PDN |
 |--------|--------------|-----|
 | **Language** | Shell scripts | Rust (memory safe) |
-| **Performance** | Subprocess-heavy | Native Rust, single process |
-| **Security** | Basic | Seccomp, AppArmor, SELinux, capabilities |
-| **API** | CLI only | CLI + gRPC + REST |
-| **Extensibility** | Limited | Plugin system |
-| **Orchestration** | Manual | Multi-container, pods |
-| **Observability** | Basic logs | Metrics, health checks, tracing |
+| **Login Cold Start** | ~0.603s | **~0.097s (~5× faster)** |
+| **List Performance** | ~0.160s | **~0.008s (~20× faster)** |
+| **Env Sanitization** | Leaks 24-163 host vars | **Strict 6 clean vars** |
+| **Root Emulation** | Basic fakeroot | **`--change-id=0:0` (`apt`/`dpkg` verified)** |
+| **Shared Memory** | Host clobbered/none | **Isolated `/dev/shm` 1777 (Chromium & Playwright ready)** |
+| **File Traversal Defense** | None (standard tar) | **Strict canonicalization (rejects `..`)** |
+| **File Sync** | None | **Delta sync via SHA256 + `--delete`** |
+| **Child Exit Code** | Truncated/collapsed | **Exact child exit code propagated** |
+| **Supervision** | None (dies on exit) | **Supervisor daemon, restart policy, watchdog** |
+| **API & IPC** | CLI only | **CLI + D-Bus broker + REST API** |
 
 ## Command Mapping
 
@@ -25,6 +29,17 @@ This guide helps you migrate from the traditional `proot-distro` shell scripts t
 | `proot-distro run ubuntu -- cmd` | `podnext run ubuntu -- cmd` | Direct execution |
 | `proot-distro remove ubuntu` | `podnext remove ubuntu` | Removes container and data |
 | `proot-distro list` | `podnext list` | Shows installed containers |
+| `proot-distro reset ubuntu` | `podnext reset ubuntu` | Reinstalls clean container image |
+| `proot-distro backup ubuntu` | `podnext backup create ubuntu` | Full tar.gz container snapshot |
+| `proot-distro restore <file>` | `podnext backup restore <id>` | Restore snapshot to new container |
+
+### File Operations (Host <-> Container)
+
+| PRoot-distro | PDN | Notes |
+|--------------|-----|-------|
+| `proot-distro cp <src> <dest>` | `podnext copy <src> <dest> [-R]` | Traversal-safe copy host <-> container |
+| (manual rsync) | `podnext sync <src> <dest> [-d]` | SHA256 delta synchronization |
+| (manual mv) | `podnext rename <old> <new>` | Rename container and rootfs metadata |
 
 ### Image Management
 
