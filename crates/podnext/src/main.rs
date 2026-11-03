@@ -2583,16 +2583,62 @@ fn split_spec(spec: &str) -> (Option<&str>, &str) {
 /// Translate a `[CONTAINER:]PATH` spec to a host path.
 ///
 /// The rootfs is a plain host directory, so a guest path is just the rootfs
-/// joined with the guest path — no protocol needed.
+/// joined with the guest path — no protocol needed. But it is a **trust
+/// boundary**: the guest path comes from the user, and a naive `join` lets
+/// `c1:../../../../etc/shadow` walk straight out of the container and read a
+/// host file. Every component is therefore checked, and the result is confirmed
+/// to still be inside the rootfs after symlinks are resolved.
 async fn resolve_endpoint(spec: &str) -> Result<std::path::PathBuf> {
     match split_spec(spec) {
         (None, path) => Ok(std::path::PathBuf::from(path)),
         (Some(name), path) => {
             let mgr = proot_distro_core::ContainerManager::new()?;
             let container = mgr.get(name).await?;
-            Ok(container.rootfs_path.join(path.trim_start_matches('/')))
+            guest_to_host(&container.rootfs_path, path)
         }
     }
+}
+
+/// Join a guest path onto a rootfs, refusing anything that leaves it.
+fn guest_to_host(rootfs: &std::path::Path, guest_path: &str) -> Result<std::path::PathBuf> {
+    use std::path::Component;
+
+    let mut resolved = rootfs.to_path_buf();
+    for component in std::path::Path::new(guest_path).components() {
+        match component {
+            Component::RootDir | Component::CurDir => {}
+            Component::Normal(part) => resolved.push(part),
+            // `..` is refused outright rather than normalised: inside a container
+            // it can only ever mean "leave", and silently clamping it would make
+            // the resulting path differ from what the user asked for.
+            Component::ParentDir => {
+                anyhow::bail!(
+                    "path '{}' escapes the container rootfs (contains '..')",
+                    guest_path
+                )
+            }
+            Component::Prefix(_) => {
+                anyhow::bail!("unsupported path component in '{}'", guest_path)
+            }
+        }
+    }
+
+    // Lexical checks cannot see a symlink inside the rootfs that points outside
+    // it, so confirm against the real path when the target exists.
+    if let (Ok(root), Ok(real)) = (
+        std::fs::canonicalize(rootfs),
+        std::fs::canonicalize(&resolved),
+    ) {
+        if !real.starts_with(&root) {
+            anyhow::bail!(
+                "path '{}' resolves outside the container rootfs ({})",
+                guest_path,
+                real.display()
+            );
+        }
+    }
+
+    Ok(resolved)
 }
 
 async fn cmd_copy(source: String, destination: String, recursive: bool, move_: bool) -> Result<()> {
@@ -2919,4 +2965,57 @@ async fn cmd_volume_prune(force: bool) -> Result<()> {
     }
     println!("Pruned {} volume(s)", pruned);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The guest path in `container:[CONTAINER:]PATH` comes from the user, so it
+    /// is a trust boundary. A plain `join` let `c1:../../../../etc/shadow` read a
+    /// host file; these cases pin that shut.
+    #[test]
+    fn guest_to_host_refuses_traversal() {
+        let rootfs = std::path::Path::new("/data/podnext/containers/c1/rootfs");
+
+        // Ordinary paths resolve under the rootfs.
+        assert_eq!(
+            guest_to_host(rootfs, "/etc/hosts").unwrap(),
+            rootfs.join("etc/hosts")
+        );
+        assert_eq!(
+            guest_to_host(rootfs, "etc/hosts").unwrap(),
+            rootfs.join("etc/hosts")
+        );
+        // "." is a no-op, and a trailing slash is fine.
+        assert_eq!(
+            guest_to_host(rootfs, "/./etc/hosts").unwrap(),
+            rootfs.join("etc/hosts")
+        );
+
+        // Anything that climbs out is refused, however it is spelled.
+        for evil in [
+            "/../../../../etc/shadow",
+            "../etc/shadow",
+            "etc/../../..",
+            "/etc/../../../etc/shadow",
+            "..",
+            "/..",
+        ] {
+            assert!(
+                guest_to_host(rootfs, evil).is_err(),
+                "expected {:?} to be refused",
+                evil
+            );
+        }
+    }
+
+    #[test]
+    fn split_spec_only_treats_a_path_free_prefix_as_a_container() {
+        assert_eq!(split_spec("c1:/etc/x"), (Some("c1"), "/etc/x"));
+        assert_eq!(split_spec("/etc/x"), (None, "/etc/x"));
+        // A host path containing a colon must not be read as a container name.
+        assert_eq!(split_spec("/data/a:b/c"), (None, "/data/a:b/c"));
+        assert_eq!(split_spec("./rel/x"), (None, "./rel/x"));
+    }
 }

@@ -137,6 +137,33 @@ impl ImageManager {
             Self::get_registry_token(&client, &registry_host, &repo_name, "push").await?
         };
 
+        // Pre-flight. Docker uploads blobs first and the manifest last; this used
+        // to PUT the manifest and *then* print "would be pushed (skipped - no
+        // local layer data)" for every layer, so the registry kept a manifest
+        // describing blobs that were never uploaded and `docker pull` failed
+        // afterwards. Refuse before any network write instead.
+        if image.layers.is_empty() {
+            bail!("Cannot push '{}': image has no layers", image_ref);
+        }
+        for layer in &image.layers {
+            if layer.diff_id.is_none() {
+                bail!(
+                    "Cannot push '{}': layer {} has no diffID (the uncompressed tar digest). \
+                     A manifest built without it is rejected by any registry that verifies \
+                     chain-IDs.",
+                    image_ref,
+                    layer.digest
+                );
+            }
+        }
+        bail!(
+            "Cannot push '{}': PDN does not retain layer blobs after extraction, so there is \
+             nothing to upload. Install the image and rebuild it into a pushed archive first \
+             (layer retention is not implemented yet).",
+            image_ref
+        );
+
+        #[allow(unreachable_code)]
         // Get image manifest
         let manifest = self.build_manifest(&image)?;
         let manifest_bytes = serde_json::to_vec(&manifest)?;
@@ -172,12 +199,7 @@ impl ImageManager {
                 continue; // Layer already exists
             }
 
-            // In a real implementation, we'd upload the layer data
-            // For now, we skip actual layer upload as it requires local layer storage
-            eprintln!(
-                "Layer {} would be pushed (skipped - no local layer data)",
-                layer.digest
-            );
+            bail!("Layer {} has no local blob to upload", layer.digest);
         }
 
         eprintln!("Image {} pushed successfully", image_ref);
@@ -243,7 +265,10 @@ impl ImageManager {
             .get(image_ref)
             .ok_or_else(|| anyhow::anyhow!("Image '{}' not found", image_ref))?;
 
-        let manifest = self.build_manifest(image)?;
+        // Inspect reports what is known: a freshly pulled image may not have
+        // diffIDs recorded yet, and `inspect` should not fail for that reason.
+        let config = self.build_config(image, false)?;
+        let manifest = Self::manifest_from_config(image, &config)?;
 
         Ok(ImageInspectInfo {
             id: image.digest.clone(),
@@ -256,39 +281,75 @@ impl ImageManager {
             container_config: serde_json::json!({}),
             docker_version: String::new(),
             author: String::new(),
-            config: ImageConfigInfo {
-                architecture: image.architecture.clone(),
-                os: image.os.clone(),
-                rootfs: RootFSInfo {
-                    typ: "layers".to_string(),
-                    diff_ids: image.layers.iter().map(|l| l.digest.clone()).collect(),
-                },
-                config: ContainerConfig {
-                    env: Vec::new(),
-                    cmd: Vec::new(),
-                    entrypoint: Vec::new(),
-                    working_dir: "/".to_string(),
-                    user: "root".to_string(),
-                    exposed_ports: HashMap::new(),
-                    volumes: HashMap::new(),
-                    labels: HashMap::new(),
-                },
-                created: image.created,
-            },
+            config: config.clone(),
             architecture: image.architecture.clone(),
             os: image.os.clone(),
             size: image.size,
             virtual_size: image.size,
-            rootfs: RootFSInfo {
-                typ: "layers".to_string(),
-                diff_ids: image.layers.iter().map(|l| l.digest.clone()).collect(),
-            },
+            rootfs: config.rootfs.clone(),
             manifest: serde_json::to_value(&manifest)?,
         })
     }
 
     /// Build OCI manifest from image (returns JSON value for serialization)
+    /// The container config blob for an image.
+    ///
+    /// `diff_ids` must hold the digest of each *uncompressed* layer tar. This
+    /// used to be filled with the compressed layer digest, which is a different
+    /// value; a registry that verifies chain-IDs rejects such a manifest. Rather
+    /// than emit a plausible-looking wrong number, refuse.
+    fn build_config(&self, image: &Image, require_diff_ids: bool) -> Result<ImageConfigInfo> {
+        let mut diff_ids = Vec::with_capacity(image.layers.len());
+        for layer in &image.layers {
+            match (&layer.diff_id, require_diff_ids) {
+                (Some(id), _) => diff_ids.push(id.clone()),
+                (None, true) => anyhow::bail!(
+                    "layer {} has no diffID (the uncompressed tar digest); it cannot be \
+                     derived from the compressed digest",
+                    layer.digest
+                ),
+                // Reporting only: show the layer digest in place of the unknown
+                // diffID so the gap is visible rather than hidden. `push` refuses
+                // before it can ship this.
+                (None, false) => diff_ids.push(layer.digest.clone()),
+            }
+        }
+
+        Ok(ImageConfigInfo {
+            architecture: image.architecture.clone(),
+            os: image.os.clone(),
+            rootfs: RootFSInfo {
+                typ: "layers".to_string(),
+                diff_ids,
+            },
+            config: ContainerConfig {
+                env: Vec::new(),
+                cmd: Vec::new(),
+                entrypoint: Vec::new(),
+                working_dir: "/".to_string(),
+                user: "root".to_string(),
+                exposed_ports: HashMap::new(),
+                volumes: HashMap::new(),
+                labels: HashMap::new(),
+            },
+            created: image.created,
+        })
+    }
+
     fn build_manifest(&self, image: &Image) -> Result<serde_json::Value> {
+        let config = self.build_config(image, true)?;
+        Self::manifest_from_config(image, &config)
+    }
+
+    /// Manifest schema 2 for an image and its config blob.
+    ///
+    /// The config's digest must describe the blob we would upload, and its size
+    /// must be the real length; this previously wrote `"size": 0` and borrowed
+    /// `image.digest` (a *layer* digest) as the config digest.
+    fn manifest_from_config(image: &Image, config: &ImageConfigInfo) -> Result<serde_json::Value> {
+        let config_bytes = serde_json::to_vec(config)?;
+        let config_digest = Self::compute_digest(&config_bytes);
+
         let layers: Vec<serde_json::Value> = image
             .layers
             .iter()
@@ -301,24 +362,16 @@ impl ImageManager {
             })
             .collect();
 
-        let config_digest = if image.digest.is_empty() {
-            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        } else {
-            &image.digest
-        };
-
-        let manifest = json!({
+        Ok(json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
             "config": {
                 "mediaType": "application/vnd.docker.container.image.v1+json",
-                "size": 0,
+                "size": config_bytes.len(),
                 "digest": config_digest,
             },
             "layers": layers,
-        });
-
-        Ok(manifest)
+        }))
     }
 
     fn parse_registry_and_repo(name: &str) -> Result<(String, String)> {
@@ -455,9 +508,18 @@ pub struct Image {
 /// Image layer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Layer {
+    /// Digest of the *compressed* blob as stored in the registry.
     pub digest: String,
     pub size: u64,
     pub media_type: String,
+    /// Digest of the *uncompressed* layer tar (the OCI "diffID").
+    ///
+    /// This is a different value from `digest` and cannot be derived from it.
+    /// It used to be filled with `digest`, which is a lie a registry that
+    /// verifies chain-IDs will reject; `push` now refuses when it is absent
+    /// rather than shipping the wrong number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_id: Option<String>,
 }
 
 /// Local image manifest (for storage)

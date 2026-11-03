@@ -147,6 +147,39 @@ pub trait RuntimeBackend: Send + Sync {
 
 ---
 
+## 6a. `build` tanpa `RUN`: subset Dockerfile yang benar-benar nyata
+
+Bedah alur Docker menunjukkan bahwa hanya **eksekusi** yang mustahil; penyusunan artefak
+tidak. `RUN` butuh fork+exec di dalam mount namespace — `unshare` EPERM, `mount(2)` SIGSYS.
+Sisanya (`FROM`, `COPY`, `ADD` dari tar/URL lokal, `ENV`, `LABEL`, `WORKDIR`, `USER`,
+`EXPOSE`, `CMD`, `ENTRYPOINT`) murni tar + JSON.
+
+Empat opsi, dengan keputusan:
+
+| Opsi | Putusan |
+|---|---|
+| `buildctl`/`podman` | **ditolak** — tidak ada di Termux, dan keduanya butuh namespace juga; akan mati di dinding yang sama |
+| serahkan ke daemon UML | nyata, tapi ini keputusan pengiriman (biaya boot VM), harus opt-in — bukan arsitektur milik PDN |
+| hapus `build` dan katakan di `--help` | jujur tapi membuang alasan `ImageManager::push` ada |
+| **subset Dockerfile → layer tar → diffID → manifest schema 2 → push** | **dipilih** |
+
+Alasannya: setiap byte beralamat-konten dan bisa diverifikasi `docker pull` dari registry
+mana pun; tidak ada digest yang dikarang. `RUN` ditolak dengan pesan eksplisit yang
+menunjuk uml4termux sebagai jalur eksekusinya.
+
+**Tiga cacat di `ImageManager` yang membuat `push` tidak nyata** (ditemukan saat bedah):
+
+| # | Cacat | Status |
+|---|---|---|
+| 1 | `diff_ids` diisi digest layer **terkompresi**, bukan diffID (sha256 tar tak-terkompresi). Dua nilai berbeda; registry yang memverifikasi chain-ID menolak | **DIPERBAIKI** — `Layer.diff_id` ditambahkan, `build_config` memakai nilai itu dan menolak bila tidak ada |
+| 2 | `config.size` ditulis `0` dan `config.digest` meminjam `image.digest` (digest *layer*, bukan digest config) | **DIPERBAIKI** — config diserialisasi, `size` = panjang nyata, `digest` = sha256 blob itu |
+| 3 | Upload blob adalah no-op yang dicetak (`"would be pushed (skipped)"`), sementara manifest tetap dikirim lebih dulu — registry menyimpan manifest yang menunjuk blob yang tidak pernah ada, dan `docker pull` gagal setelahnya | **DIPERBAIKI** — `push` menolak sebelum menyentuh jaringan; manifest tidak lagi dikirim untuk blob yang tidak ada |
+
+Sisa pekerjaan untuk `push` yang benar-benar berfungsi adalah **menyimpan blob layer**
+(PDN membuang byte-nya setelah ekstraksi) — itu bagian dari langkah 4 di bawah.
+
+---
+
 ## 7. Urutan pengerjaan yang masuk akal
 
 1. **`RuntimeBackend` + `ProotBackend`** — refactor murni, tanpa perubahan perilaku.
