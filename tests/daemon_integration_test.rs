@@ -12,8 +12,25 @@ use tokio::net::UnixStream;
 use tokio::process::Command;
 use tokio::time::{sleep, timeout};
 
-const DAEMON_BIN: &str =
-    "/data/data/com.termux/files/home/workspace/PDN/target/debug/podnext-daemon";
+/// Path to the daemon binary for the current build profile.
+///
+/// Integration tests run as `target/<profile>/deps/<name>-<hash>`, so the
+/// profile directory is two levels up. Hardcoding `target/debug/...` made the
+/// whole suite fail whenever the daemon was only built in release.
+fn daemon_bin() -> PathBuf {
+    let exe = std::env::current_exe().expect("current_exe");
+    let profile_dir = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("target profile dir");
+    let candidate = profile_dir.join("podnext-daemon");
+    assert!(
+        candidate.is_file(),
+        "podnext-daemon not found at {}; build it first, e.g. `cargo build -p podnext-daemon`",
+        candidate.display()
+    );
+    candidate
+}
 const TEST_SOCKET_NAME: &str = "daemon_test.sock";
 
 struct DaemonTestEnv {
@@ -76,7 +93,7 @@ enabled = false
     }
 
     async fn start_daemon(&mut self) -> Result<()> {
-        let mut cmd = Command::new(DAEMON_BIN);
+        let mut cmd = Command::new(daemon_bin());
         cmd.arg("--socket")
             .arg(&self.socket_path)
             .arg("--services-dir")
