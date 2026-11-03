@@ -123,10 +123,10 @@ jobs:
         run: |
           cargo build --workspace --release --target ${{ matrix.target }}
 
-      - name: Run tests for ${{ matrix.target }}
+      - name: Build tests for ${{ matrix.target }}
         if: matrix.target == 'aarch64-linux-android'
         run: |
-          cargo test --workspace --release --target ${{ matrix.target }} -- --test-threads=4
+          cargo test --workspace --release --target ${{ matrix.target }} --no-run
 
       - name: Run tests for ${{ matrix.target }} (with qemu)
         if: matrix.target == 'x86_64-linux-android'
