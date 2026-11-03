@@ -100,17 +100,24 @@ jobs:
       - name: Set linker environment variables
         run: |
           NDK_TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+          TOOLCHAIN_BIN="${NDK_TOOLCHAIN}/bin"
+          echo "${TOOLCHAIN_BIN}" >> $GITHUB_PATH
+          ln -sf "${TOOLCHAIN_BIN}/llvm-ar" "${TOOLCHAIN_BIN}/aarch64-linux-android-ar"
+          ln -sf "${TOOLCHAIN_BIN}/llvm-ranlib" "${TOOLCHAIN_BIN}/aarch64-linux-android-ranlib"
+          ln -sf "${TOOLCHAIN_BIN}/llvm-ar" "${TOOLCHAIN_BIN}/x86_64-linux-android-ar"
+          ln -sf "${TOOLCHAIN_BIN}/llvm-ranlib" "${TOOLCHAIN_BIN}/x86_64-linux-android-ranlib"
           if [ "${{ matrix.target }}" = "aarch64-linux-android" ]; then
-            LINKER="${NDK_TOOLCHAIN}/bin/aarch64-linux-android${{ matrix.api }}-clang"
+            LINKER="${TOOLCHAIN_BIN}/aarch64-linux-android${{ matrix.api }}-clang"
             CC_VAR="CC_aarch64_linux_android"
             CARGO_LINKER_VAR="CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"
           else
-            LINKER="${NDK_TOOLCHAIN}/bin/x86_64-linux-android${{ matrix.api }}-clang"
+            LINKER="${TOOLCHAIN_BIN}/x86_64-linux-android${{ matrix.api }}-clang"
             CC_VAR="CC_x86_64_linux_android"
             CARGO_LINKER_VAR="CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER"
           fi
           echo "${CC_VAR}=${LINKER}" >> $GITHUB_ENV
           echo "${CARGO_LINKER_VAR}=${LINKER}" >> $GITHUB_ENV
+          echo "AR_${{ matrix.target }}=${TOOLCHAIN_BIN}/llvm-ar" >> $GITHUB_ENV
 
       - name: Build workspace for ${{ matrix.target }}
         run: |
