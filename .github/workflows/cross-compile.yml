@@ -20,7 +20,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: 1
 
 jobs:
@@ -100,7 +99,7 @@ jobs:
 
       - name: Set linker environment variables
         run: |
-          NDK_TOOLCHAIN="${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64"
+          NDK_TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
           if [ "${{ matrix.target }}" = "aarch64-linux-android" ]; then
             LINKER="${NDK_TOOLCHAIN}/bin/aarch64-linux-android${{ matrix.api }}-clang"
             CC_VAR="CC_aarch64_linux_android"

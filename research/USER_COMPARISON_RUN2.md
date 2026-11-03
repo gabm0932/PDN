@@ -245,7 +245,7 @@ PDN's host container directory is owner-private (0700); proot-distro's is world-
 | 10 | resolv.conf | 1.1.1.1, 1.0.0.1 | 8.8.8.8, 8.8.4.4 | both resolve; different DNS |
 | 11 | `command -v nosuchbinary` | rc=127 | rc=127 | parity |
 | 12 | host dir mode / `/root` | 0700 / 755 | 0755 / 700 | PDN host dir private; PD host dir world-readable |
-| — | `exit` code propagation | always rc=1 | child code (7→7) | **PDN BUG** |
+| — | `exit` code propagation | child code (7→7, 42→42) | child code (7→7) | **PDN BUG-1 FIXED in commit 70b263e** |
 
 ---
 
@@ -294,7 +294,18 @@ PDN's host container directory is owner-private (0700); proot-distro's is world-
 
 ## Real BUG in PDN (reproduced)
 
-### BUG-1 — child exit code is not propagated; wrapper always returns 1
+### BUG-1 — child exit code is not propagated; wrapper always returns 1 [FIXED]
+
+**Status:** FIXED in commit `70b263e` (`fix(cli): exit with the child's code instead of collapsing it to 1`).
+Verified on device:
+- `podnext login deb-pdn -- /bin/sh -c 'exit 0'` -> rc=0
+- `podnext login deb-pdn -- /bin/sh -c 'exit 3'` -> rc=3
+- `podnext login deb-pdn -- /bin/sh -c 'exit 7'` -> rc=7
+- `podnext login deb-pdn -- /bin/sh -c 'exit 42'` -> rc=42
+- `podnext login deb-pdn -- /bin/sh -c 'exit 127'` -> rc=127
+- `podnext run deb-pdn -- /bin/sh -c 'exit 9'` -> rc=9
+
+Initial diagnosis and reproduction below:
 
 Symptom: `podnext login <name> -- <cmd>` prints the child's exit code in an error line but exits 1
 regardless of the child's status, breaking `&&`, `if`, and CI checks.

@@ -177,7 +177,7 @@ impl PtraceController {
 
     pub fn shutdown(&self) -> Result<()> {
         let tracees = self.tracees.lock();
-        for (pid, _tracee) in tracees.iter() {
+        for pid in tracees.keys() {
             ptrace::detach(*pid, None)?;
         }
         Ok(())
