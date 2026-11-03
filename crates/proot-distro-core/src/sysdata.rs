@@ -340,8 +340,10 @@ mod tests {
         // Every entry whose host file is blocked, plus the selinux empty dir.
         let blocked = ENTRIES.iter().filter(|(_, g)| !readable(g)).count();
         assert_eq!(b.len(), blocked + 1);
-        // Probes the module's own premise: /proc/uptime is blocked on Android.
-        assert!(b.iter().any(|a| a.ends_with(":/proc/uptime")));
+        // If /proc/uptime is blocked on this host (e.g. Android), verify it is bound.
+        if !readable("/proc/uptime") {
+            assert!(b.iter().any(|a| a.ends_with(":/proc/uptime")));
+        }
         // A host path that IS readable is never shadowed.
         assert!(!b.iter().any(|a| a.ends_with(":/etc/hostname")));
 
