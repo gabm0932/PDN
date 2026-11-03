@@ -521,11 +521,17 @@ impl TestEnvironment {
         quota_manager.collect_usage(name, pid).await
     }
 
+    fn workspace_dir() -> PathBuf {
+        std::env::var("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default())
+    }
+
     /// Verify build
     pub async fn verify_build(&self) -> Result<bool> {
         let output = tokio::process::Command::new("cargo")
             .args(&["build", "--workspace"])
-            .current_dir("/data/data/com.termux/files/home/workspace/PDN")
+            .current_dir(Self::workspace_dir())
             .output()
             .await?;
         Ok(output.status.success())
@@ -535,7 +541,7 @@ impl TestEnvironment {
     pub async fn run_unit_tests(&self) -> Result<bool> {
         let output = tokio::process::Command::new("cargo")
             .args(&["test", "--workspace", "--lib"])
-            .current_dir("/data/data/com.termux/files/home/workspace/PDN")
+            .current_dir(Self::workspace_dir())
             .output()
             .await?;
         Ok(output.status.success())
@@ -549,7 +555,7 @@ impl TestEnvironment {
 
     /// Verify documentation exists
     pub async fn verify_docs(&self) -> Result<bool> {
-        let docs_dir = PathBuf::from("/data/data/com.termux/files/home/workspace/PDN/docs");
+        let docs_dir = Self::workspace_dir().join("docs");
         Ok(docs_dir.exists() && docs_dir.join("src").exists())
     }
 

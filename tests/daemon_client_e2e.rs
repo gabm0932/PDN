@@ -9,7 +9,8 @@ use tokio::time::timeout;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let socket_path = "/data/data/com.termux/files/home/.local/run/pn-next/daemon.sock";
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let socket_path = format!("{}/.local/run/pn-next/daemon.sock", home);
 
     // Connect to daemon
     let mut stream = UnixStream::connect(socket_path).await?;
