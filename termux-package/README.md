@@ -5,7 +5,7 @@ This directory contains the Termux package build recipe for PDN (PRoot Distro Ne
 ## Package Information
 
 - **Name**: pdn
-- **Version**: 0.1.0
+- **Version**: 0.1.7
 - **Description**: PRoot Distro Next - Next-generation container platform for Termux/Android
 - **License**: GPL-2.0
 - **Homepage**: https://github.com/michaelamoetoevsky/PDN
@@ -30,9 +30,10 @@ This directory contains the Termux package build recipe for PDN (PRoot Distro Ne
 ## Installation
 
 The package installs:
-- `podnext` - Main CLI binary
-- `podnext-daemon` - Service supervisor daemon
-- `pn-gateway` - Gateway binary (if available)
+- `podnext` - Main CLI binary (`${PREFIX}/bin/podnext`)
+- `podnext-daemon` - Service supervisor daemon (`${PREFIX}/bin/podnext-daemon`)
+- Runit service script (`${PREFIX}/var/service/podnextd/run`)
+- Runit log service script (`${PREFIX}/var/service/podnextd/log/run`)
 - Shell completions (bash, zsh, fish)
 - Termux:Boot integration script
 - Default configuration files
@@ -46,6 +47,17 @@ This package is designed to be built within the termux-packages build infrastruc
 ./build-package.sh pdn
 ```
 
+## Service Management (Runit / termux-services)
+
+A runit service is installed at `${PREFIX}/var/service/podnextd`:
+
+- Enable service: `sv-enable podnextd`
+- Disable service: `sv-disable podnextd`
+- Start service: `sv up podnextd`
+- Stop service: `sv down podnextd`
+- Status: `sv status podnextd`
+- Logs: `${PREFIX}/var/log/sv/podnextd/current`
+
 ## Configuration
 
 Default configuration files are installed to:
@@ -58,7 +70,7 @@ Runtime directories:
 
 ## Termux:Boot Integration
 
-A boot script is installed at `${PREFIX}/etc/termux/boot/pdn-services` to auto-start services on boot.
+A boot script is installed at `${PREFIX}/etc/termux/boot/pdn-services` to auto-start services on boot when using the Termux:Boot app.
 
 ## Shell Completions
 
@@ -70,7 +82,7 @@ Completions are installed for:
 ## Submitting to termux-packages
 
 1. Fork the termux-packages repository
-2. Create a new directory `packages/pdn` with the build.sh script
-2. Submit a PR to termux-packages
-3. Wait for review and merge
-3. The package will be built and published to Termux repositories
+2. Create a new directory `packages/pdn` with `build.sh` and `service/`
+3. Submit a PR to termux-packages
+4. Wait for review and merge
+5. The package will be built and published to Termux repositories

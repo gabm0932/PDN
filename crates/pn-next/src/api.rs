@@ -249,6 +249,7 @@ async fn create_container(
         labels: req.labels.unwrap_or_default(),
         annotations: req.annotations.unwrap_or_default(),
         gpu: req.gpu,
+        ..Default::default()
     };
 
     let mut manager = state.container_manager.write().await;
@@ -576,6 +577,7 @@ async fn pull_image(
         labels: HashMap::new(),
         annotations: HashMap::new(),
         gpu: Some(GpuConfig::default()),
+        ..Default::default()
     };
 
     let _container = manager

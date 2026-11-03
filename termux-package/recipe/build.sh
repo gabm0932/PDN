@@ -22,25 +22,59 @@ termux_step_pre_configure() {
 }
 
 termux_step_make() {
-	# Build the workspace in release mode
-	cargo build --workspace --release --target ${CARGO_TARGET_NAME}
+	# Build both podnext and podnext-daemon binaries with cargo
+	cargo build --jobs ${TERMUX_PKG_MAKE_PROCESSES:-$(nproc)} --target ${CARGO_TARGET_NAME} --release \
+		--package podnext --bin podnext --bin podnext-daemon
 }
 
 termux_step_make_install() {
+	local bin_dir="target/${CARGO_TARGET_NAME}/release"
+	[ ! -d "${bin_dir}" ] && bin_dir="target/release"
+
 	# Install podnext binary
-	install -Dm700 target/${CARGO_TARGET_NAME}/release/podnext \
+	install -Dm700 ${bin_dir}/podnext \
 		${TERMUX_PREFIX}/bin/podnext
 
-	# Install podnext-daemon binary if it exists
-	if [ -f target/${CARGO_TARGET_NAME}/release/podnext-daemon ]; then
-		install -Dm700 target/${CARGO_TARGET_NAME}/release/podnext-daemon \
-			${TERMUX_PREFIX}/bin/podnext-daemon
+	# Install podnext-daemon binary
+	install -Dm700 ${bin_dir}/podnext-daemon \
+		${TERMUX_PREFIX}/bin/podnext-daemon
+
+	# Install runit service script
+	mkdir -p ${TERMUX_PREFIX}/var/service/podnextd/log
+	if [ -f "${TERMUX_PKG_SRCDIR}/termux-package/service/podnextd/run" ]; then
+		install -Dm755 "${TERMUX_PKG_SRCDIR}/termux-package/service/podnextd/run" \
+			${TERMUX_PREFIX}/var/service/podnextd/run
+	elif [ -f "${TERMUX_PKG_BUILDER_DIR}/service/podnextd/run" ]; then
+		install -Dm755 "${TERMUX_PKG_BUILDER_DIR}/service/podnextd/run" \
+			${TERMUX_PREFIX}/var/service/podnextd/run
+	elif [ -f "${TERMUX_PKG_BUILDER_DIR}/../service/podnextd/run" ]; then
+		install -Dm755 "${TERMUX_PKG_BUILDER_DIR}/../service/podnextd/run" \
+			${TERMUX_PREFIX}/var/service/podnextd/run
+	else
+		cat > ${TERMUX_PREFIX}/var/service/podnextd/run << 'EOF'
+#!/bin/sh
+exec 2>&1
+export LD_LIBRARY_PATH=""
+exec podnext-daemon
+EOF
+		chmod 755 ${TERMUX_PREFIX}/var/service/podnextd/run
 	fi
 
-	# Install pn-gateway binary if it exists
-	if [ -f target/${CARGO_TARGET_NAME}/release/pn-gateway ]; then
-		install -Dm700 target/${CARGO_TARGET_NAME}/release/pn-gateway \
-			${TERMUX_PREFIX}/bin/pn-gateway
+	if [ -f "${TERMUX_PKG_SRCDIR}/termux-package/service/podnextd/log/run" ]; then
+		install -Dm755 "${TERMUX_PKG_SRCDIR}/termux-package/service/podnextd/log/run" \
+			${TERMUX_PREFIX}/var/service/podnextd/log/run
+	elif [ -f "${TERMUX_PKG_BUILDER_DIR}/service/podnextd/log/run" ]; then
+		install -Dm755 "${TERMUX_PKG_BUILDER_DIR}/service/podnextd/log/run" \
+			${TERMUX_PREFIX}/var/service/podnextd/log/run
+	elif [ -f "${TERMUX_PKG_BUILDER_DIR}/../service/podnextd/log/run" ]; then
+		install -Dm755 "${TERMUX_PKG_BUILDER_DIR}/../service/podnextd/log/run" \
+			${TERMUX_PREFIX}/var/service/podnextd/log/run
+	else
+		cat > ${TERMUX_PREFIX}/var/service/podnextd/log/run << 'EOF'
+#!/bin/sh
+exec svlogd -tt /data/data/com.termux/files/usr/var/log/sv/podnextd
+EOF
+		chmod 755 ${TERMUX_PREFIX}/var/service/podnextd/log/run
 	fi
 
 	# Create directories for service supervisor

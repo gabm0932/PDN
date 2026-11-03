@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+export LD_LIBRARY_PATH=""
+exec podnext-daemon

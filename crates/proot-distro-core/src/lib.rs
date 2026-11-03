@@ -19,11 +19,14 @@ pub mod config;
 pub mod constants;
 pub mod container;
 pub mod dirfd;
+pub mod dockerfile;
 pub mod gpu;
 pub mod guestdirs;
 pub mod guestfile;
 pub mod image;
 pub mod install;
+pub mod l2s;
+pub mod layer_diff;
 pub mod locking;
 pub mod login;
 pub mod message;
@@ -31,6 +34,7 @@ pub mod names;
 pub mod network;
 pub mod paths;
 pub mod progress;
+pub mod runtime;
 pub mod security;
 pub mod session;
 pub mod shm;
@@ -52,6 +56,7 @@ pub use container::{
     NetworkConfig, NetworkMode, PortMapping, ResourceLimits, SecurityConfig, SessionInfo,
 };
 pub use dirfd::DirFd;
+pub use dockerfile::{parse_dockerfile, DockerfileInstruction};
 pub use gpu::{
     apply_gpu_to_rootfs, detect_gpu_devices, generate_gpu_bind_mounts, GpuConfig, GpuDevice,
     GpuDeviceType,
@@ -61,6 +66,8 @@ pub use image::{
     Image, ImageHistoryEntry, ImageInspectInfo, ImageManager, ImageSource, RootFSInfo,
 };
 pub use install::Installer;
+pub use l2s::rewrite_l2s_tree;
+pub use layer_diff::compute_layer_diff;
 pub use locking::LockManager;
 pub use login::{LoginManager, LoginOptions};
 pub use message::{Message, MessageLevel};
@@ -68,12 +75,16 @@ pub use names::NameValidator;
 pub use network::{NetworkInfo, NetworkManager};
 pub use paths::{ContainerPaths, PathResolver};
 pub use progress::ProgressTracker;
+pub use runtime::{ProotBackend, RuntimeBackend, RuntimeKind, RuntimeStatus, UmlBackend};
 pub use security::{
     AppArmorProfile, CapabilityConfig, SeccompAction, SeccompArch, SeccompArg, SeccompOp,
     SeccompProfile, SeccompSyscallRule, SecurityHardeningManager, SecurityProfileConfig,
     SecurityProfileType, SelLinuxProfile,
 };
-pub use session::{Session, SessionManager, SessionStatus};
+pub use session::{
+    active_sessions, kill_session, register_session, Session, SessionManager, SessionRecord,
+    SessionStatus,
+};
 pub use shm::ShmManager;
 pub use signature::{
     extract_signature_from_annotations, ImageSignature, SignatureConfig, SignatureType,

@@ -44,3 +44,5 @@ hex = "0.4"
 toml = "0.8"
 strum = { version = "0.25", features = ["derive"] }
 serde_yaml = "0.9"
+libc = "0.2"
+tempfile = "3.8"

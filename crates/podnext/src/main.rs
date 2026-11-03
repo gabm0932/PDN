@@ -587,6 +587,24 @@ enum Commands {
     #[command(subcommand)]
     Volume(VolumeCommands),
 
+    /// [Advanced] Run Docker CLI commands transparently via kernel-capable runtime (UML)
+    #[command(
+        long_about = "Execute Docker CLI commands transparently through User-Mode Linux (UML) runtime.\n\n\
+        EXAMPLES:\n  \
+        podnext docker run --rm hello-world\n  \
+        podnext docker ps\n  \
+        podnext docker images"
+    )]
+    Docker {
+        /// Optional container or instance name
+        #[arg(short, long)]
+        container: Option<String>,
+
+        /// Arguments passed through to the docker CLI
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// [Core] Generate shell completions
     Completion {
         /// Shell to generate completions for
@@ -1168,6 +1186,26 @@ enum BackupTypeArg {
 #[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum BuildCommands {
+    /// Build an OCI container image from a Dockerfile context
+    #[command(
+        long_about = "Build an OCI container image from a Dockerfile context directory.\n\n\
+        EXAMPLES:\n  \
+        podnext build local -t my-app:latest .\n  \
+        podnext build local -f Dockerfile.custom -t my-app:v1 ./context"
+    )]
+    Local {
+        /// Name and optionally a tag in the 'name:tag' format
+        #[arg(short, long)]
+        tag: Option<String>,
+
+        /// Path to the Dockerfile (defaults to 'PATH/Dockerfile')
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+
+        /// Build context path (directory containing Dockerfile and assets)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Submit a build
     Submit {
         /// Build specification file
@@ -1769,6 +1807,7 @@ async fn execute_command(cmd: Commands) -> Result<()> {
         Commands::Build(cmd) => execute_build_command(cmd).await,
         Commands::Gitops(cmd) => execute_gitops_command(cmd).await,
         Commands::Dashboard(cmd) => execute_dashboard_command(cmd).await,
+        Commands::Docker { container, args } => cmd_docker(container, args).await,
 
         // Utilities
         Commands::Completion { shell } => cmd_completion(shell).await,
@@ -1891,6 +1930,7 @@ async fn cmd_run(
 
 async fn cmd_ps(format: OutputFormat) -> Result<()> {
     let sessions = list_sessions_native_full().await?;
+    let active_disk_sessions = proot_distro_core::session::active_sessions().unwrap_or_default();
 
     #[derive(Tabled, Serialize)]
     struct SessionRow {
@@ -1914,7 +1954,7 @@ async fn cmd_ps(format: OutputFormat) -> Result<()> {
         started: String,
     }
 
-    let rows: Vec<SessionRow> = sessions
+    let mut rows: Vec<SessionRow> = sessions
         .iter()
         .map(|s| SessionRow {
             id: s.id.clone(),
@@ -1930,6 +1970,22 @@ async fn cmd_ps(format: OutputFormat) -> Result<()> {
             }),
         })
         .collect();
+
+    for act in active_disk_sessions {
+        if !rows.iter().any(|r| r.pid == act.pid.to_string()) {
+            rows.push(SessionRow {
+                id: format!("sess-{}", act.pid),
+                container: act.container_name,
+                user: act.login_uid,
+                command: act.cmdline.join(" "),
+                cwd: "-".to_string(),
+                pid: act.pid.to_string(),
+                status: "Running".to_string(),
+                created: "-".to_string(),
+                started: "-".to_string(),
+            });
+        }
+    }
 
     match format {
         OutputFormat::Table => output_table(&rows),
@@ -2010,7 +2066,62 @@ async fn cmd_attach(container: String, user: Option<String>, command: Vec<String
     login_container_native(&container, user, cmd).await
 }
 
+async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result<()> {
+    let container_mgr = proot_distro_core::ContainerManager::new()?;
+    let backend: Box<dyn proot_distro_core::RuntimeBackend> = if let Some(ref name) = container_name
+    {
+        let c = container_mgr.get(name).await?;
+        container_mgr.get_backend(&c)
+    } else {
+        Box::new(proot_distro_core::UmlBackend::new())
+    };
+
+    if !backend.supports_kernel_features() {
+        anyhow::bail!(
+            "The configured runtime backend '{}' does not support kernel features required by Docker.\n\
+             Reason: Docker requires namespaces (mount, pid, net) and cgroups v2, which PRoot cannot provide.\n\
+             Resolution: Start the UML backend with 'uml4termux up' and use '--runtime uml'.",
+            format!("{:?}", backend.kind()).to_lowercase()
+        );
+    }
+
+    let status = backend.status().await?;
+    if !status.running {
+        anyhow::bail!(
+            "UML kernel runtime is not running (status: {}). Please start it with 'uml4termux up'.",
+            status.details
+        );
+    }
+
+    let mut docker_cmd = vec!["docker".to_string()];
+    docker_cmd.extend(args);
+
+    let dummy_container = proot_distro_core::Container::default();
+    let exit_code = backend.execute(&dummy_container, docker_cmd).await?;
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+    Ok(())
+}
+
 async fn cmd_kill(container: String) -> Result<()> {
+    if let Ok(active) = proot_distro_core::session::active_sessions() {
+        let mut killed_any = false;
+        for s in active {
+            if s.container_name == container || container == "all" || container == "--all" {
+                if let Ok(()) = proot_distro_core::session::kill_session(s.pid, libc::SIGQUIT) {
+                    println!(
+                        "Sent SIGQUIT to session PID {} ({})",
+                        s.pid, s.container_name
+                    );
+                    killed_any = true;
+                }
+            }
+        }
+        if killed_any {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+    }
     kill_container_native(&container).await
 }
 
@@ -2780,6 +2891,22 @@ async fn cmd_rename(oldname: String, newname: String) -> Result<()> {
                 );
             }
             std::fs::write(&meta_path, serde_json::to_string_pretty(&value)?)?;
+        }
+    }
+
+    // Rewrite any link2symlink intermediate targets pointing to old rootfs
+    let old_rootfs = src_dir.join("rootfs");
+    let new_rootfs = dst_dir.join("rootfs");
+    if new_rootfs.exists() {
+        if let Ok(rewritten) =
+            proot_distro_core::l2s::rewrite_l2s_tree(&new_rootfs, &old_rootfs, &new_rootfs)
+        {
+            if rewritten > 0 {
+                pn_trace!(
+                    "Rewrote {} link2symlink target(s) for renamed container",
+                    rewritten
+                );
+            }
         }
     }
 

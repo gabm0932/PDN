@@ -5,6 +5,7 @@
 use crate::gpu::GpuConfig;
 use crate::locking::LockManager;
 use crate::paths::ContainerPaths;
+use crate::runtime::{ProotBackend, RuntimeBackend, RuntimeKind, UmlBackend};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use proot_core::{ProotConfig, ProotEngine};
@@ -175,13 +176,22 @@ impl ContainerManager {
     }
 
     pub async fn kill(&self, name: &str) -> Result<()> {
+        // Terminate matching active disk sessions via SIGQUIT (graceful) then SIGKILL
+        if let Ok(active) = crate::session::active_sessions() {
+            for s in active {
+                if s.container_name == name || name == "all" || name == "--all" {
+                    let _ = crate::session::kill_session(s.pid, libc::SIGQUIT);
+                }
+            }
+        }
+
         let mut containers = self.containers.lock().await;
         if let Some(container) = containers.get_mut(name) {
             container.status = ContainerStatus::Stopped;
             container.pid = None;
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Container '{}' not found", name))
+            Ok(())
         }
     }
 
@@ -305,83 +315,19 @@ impl ContainerManager {
         self.start(name).await
     }
 
+    /// Returns the execution backend corresponding to container's configured runtime
+    pub fn get_backend(&self, container: &Container) -> Box<dyn RuntimeBackend> {
+        match container.config.runtime {
+            RuntimeKind::Proot => Box::new(ProotBackend::with_engine(self.proot_engine.clone())),
+            RuntimeKind::Uml => Box::new(UmlBackend::new()),
+        }
+    }
+
     /// Execute a command in the container and wait for completion (foreground execution)
     pub async fn execute(&self, name: &str, command: Vec<String>) -> Result<i32> {
         let container = self.get(name).await?;
-
-        let engine = self.get_engine().await?;
-        let mut engine_guard = engine.lock().await;
-
-        // Configure proot from container config
-        engine_guard.config.rootfs = Some(container.rootfs_path.clone());
-        engine_guard.config.bind = container
-            .config
-            .bind_mounts
-            .iter()
-            .map(|b| {
-                format!(
-                    "{}:{}:{}",
-                    b.source,
-                    b.target,
-                    if b.readonly { "ro" } else { "rw" }
-                )
-            })
-            .collect();
-
-        // Fake /proc entries. Android blocks /proc/uptime, /proc/stat,
-        // /proc/version and others, so guest tools (top, htop, free, uptime)
-        // read nothing. Bind static stubs over them, from
-        // <container_dir>/sysdata/ — a sibling of the rootfs. Appended after
-        // the container's own binds so these win.
-        if let Some(container_dir) = container.rootfs_path.parent() {
-            if crate::sysdata::ensure(container_dir).is_ok() {
-                engine_guard
-                    .config
-                    .bind
-                    .extend(crate::sysdata::bindings(container_dir));
-            }
-            // `--bind=/dev` masks the rootfs' own dev/, so the guest needs a
-            // real /dev/shm bound in (Chromium and anything using POSIX shm).
-            if crate::guestdirs::ensure(container_dir).is_ok() {
-                engine_guard
-                    .config
-                    .bind
-                    .extend(crate::guestdirs::bindings(container_dir));
-            }
-        }
-        engine_guard.config.cwd = Some(
-            container
-                .config
-                .working_dir
-                .clone()
-                .unwrap_or_else(|| "/".to_string())
-                .into(),
-        );
-        engine_guard.config.env = container
-            .config
-            .env_vars
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect();
-        engine_guard.config.seccomp = container.config.security.seccomp_profile.is_some();
-        engine_guard.config.kernel_release = container.config.kernel_release.clone();
-        engine_guard.config.hostname = container.config.hostname.clone();
-
-        // Handle empty command
-        let cmd = if command.is_empty() {
-            vec![
-                "/bin/sh".to_string(),
-                "-c".to_string(),
-                "exec /bin/sh".to_string(),
-            ]
-        } else {
-            command
-        };
-        engine_guard.config.command = cmd;
-
-        // Execute and wait for completion
-        let exit_code = engine_guard.execute().await? as i32;
-        Ok(exit_code)
+        let backend = self.get_backend(&container);
+        backend.execute(&container, command).await
     }
 
     pub fn backup(&self, _container: &Container, _dest: &Path) -> Result<()> {
@@ -415,6 +361,8 @@ pub struct ContainerConfig {
     pub labels: HashMap<String, String>,
     pub annotations: HashMap<String, String>,
     pub gpu: Option<GpuConfig>,
+    #[serde(default)]
+    pub runtime: RuntimeKind,
 }
 
 impl Default for ContainerConfig {
@@ -437,6 +385,7 @@ impl Default for ContainerConfig {
             labels: HashMap::new(),
             annotations: HashMap::new(),
             gpu: Some(GpuConfig::default()),
+            runtime: RuntimeKind::default(),
         }
     }
 }
@@ -560,7 +509,22 @@ impl Container {
             rootfs_path,
         })
     }
+}
 
+impl Default for Container {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            config: ContainerConfig::default(),
+            created_at: Utc::now(),
+            status: ContainerStatus::Stopped,
+            pid: None,
+            rootfs_path: PathBuf::new(),
+        }
+    }
+}
+
+impl Container {
     pub fn info(&self) -> ContainerInfo {
         ContainerInfo {
             name: self.name.clone(),

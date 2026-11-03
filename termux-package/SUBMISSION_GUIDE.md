@@ -2,11 +2,11 @@
 
 ## Package Information
 - **Name**: pdn
-- **Version**: 0.1.0
+- **Version**: 0.1.7
 - **Description**: PRoot Distro Next - Next-generation container platform for Termux/Android
 - **License**: GPL-2.0
 - **Homepage**: https://github.com/michaelamoetoevsky/PDN
-- **Source**: https://github.com/michaelamoetoevsky/PDN/archive/refs/tags/v0.1.0.tar.gz
+- **Source**: https://github.com/michaelamoetoevsky/PDN/archive/refs/tags/v0.1.7.tar.gz
 
 ## Build Dependencies
 - rust
@@ -26,9 +26,12 @@
 ## Package Contents
 
 ### Binaries
-- `podnext` - Main CLI binary
-- `podnext-daemon` - Service supervisor daemon
-- `pn-gateway` - Gateway binary
+- `podnext` - Main CLI binary (`${PREFIX}/bin/podnext`)
+- `podnext-daemon` - Service supervisor daemon (`${PREFIX}/bin/podnext-daemon`)
+
+### Services (Runit)
+- `${PREFIX}/var/service/podnextd/run` - Runit service script
+- `${PREFIX}/var/service/podnextd/log/run` - Service logging script
 
 ### Shell Completions
 - bash: `share/bash-completion/completions/podnext`
@@ -52,10 +55,11 @@
    cd termux-packages
    ```
 
-2. Create the package directory:
+2. Create the package directory and copy recipe + service files:
    ```bash
    mkdir -p packages/pdn
    cp /path/to/PDN/termux-package/recipe/build.sh packages/pdn/
+   cp -r /path/to/PDN/termux-package/service packages/pdn/
    ```
 
 3. Add the package to the build system:
@@ -76,8 +80,9 @@
 ## Verification Checklist
 
 - [ ] Package builds successfully in termux-packages CI
-- [ ] Binary runs correctly on Termux/Android
+- [ ] Binaries run correctly on Termux/Android (`podnext`, `podnext-daemon`)
 - [ ] All subcommands work (install, list, service, daemon, etc.)
+- [ ] Runit service starts and logs correctly (`sv-enable podnextd`, `sv up podnextd`)
 - [ ] Shell completions work
 - [ ] Termux:Boot integration works
 - [ ] Service supervisor daemon works
@@ -85,21 +90,19 @@
 ## Binary Verification
 
 The release binaries are available at:
-https://github.com/michaelamoetoevsky/PDN/releases/tag/v0.1.0
+https://github.com/michaelamoetoevsky/PDN/releases/tag/v0.1.7
 
 - `podnext-aarch64-linux-android` - Main CLI
-- `pn-gateway-aarch64-linux-android` - Gateway service
+- `podnext-daemon-aarch64-linux-android` - Supervisor Daemon
 
 ## Build Verification
 
 All tests pass:
 ```
 cargo test --workspace
-# 93 tests pass across all crates
 ```
 
 Workspace compiles cleanly:
 ```
 cargo check --workspace
-# Clean compilation (only warnings)
 ```

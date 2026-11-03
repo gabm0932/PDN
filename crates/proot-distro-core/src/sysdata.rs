@@ -139,7 +139,7 @@ fn kernel_release() -> String {
 }
 
 /// Online CPU ids, mirroring what the guest's own `/proc/cpuinfo` will list.
-fn host_cpu_ids() -> Vec<u32> {
+pub fn host_cpu_ids() -> Vec<u32> {
     let mut ids = Vec::new();
     if let Ok(text) = fs::read_to_string("/proc/cpuinfo") {
         for line in text.lines() {
@@ -148,6 +148,22 @@ fn host_cpu_ids() -> Vec<u32> {
                     if let Ok(n) = value.trim().parse::<u32>() {
                         ids.push(n);
                     }
+                }
+            }
+        }
+    }
+    if ids.is_empty() {
+        if let Ok(online) = fs::read_to_string("/sys/devices/system/cpu/online") {
+            for part in online.trim().split(',') {
+                if let Some((start, end)) = part.split_once('-') {
+                    if let (Ok(s), Ok(e)) = (start.trim().parse::<u32>(), end.trim().parse::<u32>())
+                    {
+                        for i in s..=e {
+                            ids.push(i);
+                        }
+                    }
+                } else if let Ok(n) = part.trim().parse::<u32>() {
+                    ids.push(n);
                 }
             }
         }
@@ -175,7 +191,7 @@ fn cpu_rows(cpus: &[u32]) -> Vec<(u32, [u64; 10])> {
 /// `/proc/stat` with one `cpuN` line per online CPU. The aggregate `cpu` line
 /// is the column-wise sum of those, as the kernel's is, so a tool that
 /// cross-checks the two sees them agree.
-fn fake_stat(cpus: &[u32]) -> String {
+pub fn fake_stat(cpus: &[u32]) -> String {
     let rows = cpu_rows(cpus);
     let mut totals = [0u64; 10];
     for (_, row) in &rows {
@@ -194,7 +210,7 @@ fn fake_stat(cpus: &[u32]) -> String {
 
 /// `/proc/uptime`, the second field being total idle ticks over all CPUs so it
 /// stays consistent with the idle column of `cpu` in `fake_stat`.
-fn fake_uptime(cpus: &[u32]) -> String {
+pub fn fake_uptime(cpus: &[u32]) -> String {
     let idle: u64 = cpu_rows(cpus).iter().map(|(_, r)| r[IDLE_COLUMN]).sum();
     format!(
         "{} {:.2}\n",

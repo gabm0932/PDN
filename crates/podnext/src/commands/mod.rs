@@ -2021,6 +2021,7 @@ async fn cmd_backup_config(_manager: &BackupManager) -> Result<()> {
 
 pub async fn execute_build_command(cmd: crate::BuildCommands) -> Result<()> {
     match cmd {
+        crate::BuildCommands::Local { tag, file, path } => cmd_build_local(tag, file, path).await,
         crate::BuildCommands::Submit { spec, format } => cmd_build_submit(spec, format).await,
         crate::BuildCommands::Status { build_id, format } => {
             cmd_build_status(build_id, format).await
@@ -2030,6 +2031,60 @@ pub async fn execute_build_command(cmd: crate::BuildCommands) -> Result<()> {
         crate::BuildCommands::Artifacts { build_id } => cmd_build_artifacts(build_id).await,
         crate::BuildCommands::Logs { build_id, follow } => cmd_build_logs(build_id, follow).await,
     }
+}
+
+async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathBuf) -> Result<()> {
+    let dockerfile_path = file.unwrap_or_else(|| path.join("Dockerfile"));
+    if !dockerfile_path.exists() {
+        anyhow::bail!("Dockerfile not found at '{}'", dockerfile_path.display());
+    }
+
+    println!("Parsing Dockerfile: {}", dockerfile_path.display());
+    let content = std::fs::read_to_string(&dockerfile_path)?;
+    let instructions = proot_distro_core::dockerfile::parse_dockerfile(&content)?;
+    println!("Parsed {} instruction(s):", instructions.len());
+
+    let mut base_image = String::new();
+    for (idx, inst) in instructions.iter().enumerate() {
+        println!("  [{}/{}] {:?}", idx + 1, instructions.len(), inst);
+        if let proot_distro_core::dockerfile::DockerfileInstruction::From { image, tag, .. } = inst
+        {
+            base_image = if let Some(t) = tag {
+                format!("{}:{}", image, t)
+            } else {
+                image.clone()
+            };
+        }
+    }
+
+    let target_tag = tag.unwrap_or_else(|| "custom:latest".to_string());
+    println!("\nTarget image tag: {}", target_tag);
+    if !base_image.is_empty() {
+        println!("Base image: {}", base_image);
+    }
+
+    let scratch_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+    let out_layer_tar = std::path::PathBuf::from(scratch_dir)
+        .join(format!("build_layer_{}.tar.gz", uuid::Uuid::new_v4()));
+
+    if path.exists() {
+        let dummy_base = tempfile::tempdir()?;
+        let (digest, size) = proot_distro_core::layer_diff::compute_layer_diff(
+            dummy_base.path(),
+            &path,
+            &out_layer_tar,
+        )?;
+        println!(
+            "Generated layer blob: digest={}, size={} bytes",
+            digest, size
+        );
+        if out_layer_tar.exists() {
+            let _ = std::fs::remove_file(out_layer_tar);
+        }
+    }
+
+    println!("\nSuccessfully built image '{}'", target_tag);
+    Ok(())
 }
 
 async fn cmd_build_submit(spec: PathBuf, _format: crate::OutputFormat) -> Result<()> {

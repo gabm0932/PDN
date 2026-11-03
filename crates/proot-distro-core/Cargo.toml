@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 proot-core = { path = "../proot-core" }
 proot-compat = { path = "../proot-compat" }
+async-trait = "0.1"
 libc = "0.2"
 nix = { version = "0.27", features = ["mount", "process"] }
 rustix = "0.38"
