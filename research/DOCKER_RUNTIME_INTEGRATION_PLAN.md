@@ -1,48 +1,48 @@
-# Blueprint Integrasi Runtime Docker di PDN: Arsitektur & Implementasi RuntimeBackend
+# Docker Runtime Integration Blueprint in PDN: Architecture & RuntimeBackend Implementation
 
-**Status:** Rencana Kerja & Blueprint Implementasi Konkret  
-**Target File:** `crates/proot-distro-core/src/runtime.rs`, `container.rs`, `lib.rs`, `crates/podnext/src/main.rs`  
-**Host Lingkungan:** Android 16 (API 36), aarch64, Linux 6.1.157, Termux unprivileged (`uid=10396`, `CapEff=0`)
+**Status:** Implementation Blueprint & Technical Architecture
+**Target Files:** `crates/proot-distro-core/src/runtime.rs`, `container.rs`, `lib.rs`, `crates/podnext/src/main.rs`
+**Host Environment:** Android 16 (API 36), aarch64, Linux 6.1.157, Termux unprivileged (`uid=10396`, `CapEff=0`)
 
 ---
 
-## 1. Perbandingan Struktural: Docker vs PRoot
+## 1. Structural Comparison: Docker vs PRoot
 
-### 1.1 Mengapa Docker Mustahil Berjalan di PRoot
-PRoot bekerja murni di ruang pengguna melalui pelacakan panggilan sistem `ptrace(2)` (`PTRACE_SYSCALL`). PRoot bukanlah kernel; ia hanya mencegat panggilan sistem tertentu yang berkaitan dengan jalur file dan identitas proses untuk mensimulasikan `chroot` dan `fake root` (`uid=0`, `gid=0`).
+### 1.1 Why Docker Cannot Run Under PRoot
+PRoot operates purely in user-space via `ptrace(2)` system call tracing (`PTRACE_SYSCALL`). PRoot is not a kernel; it merely intercepts select file-path and process-identity syscalls to simulate `chroot` and `fake root` (`uid=0`, `gid=0`).
 
-Docker (`dockerd`) dan container runtime OCI (`runc`) tidak dapat berjalan hanya dengan manipulasi path di ruang pengguna. Docker membutuhkan isolasi dan manipulasi virtualisasi tingkat kernel yang nyata.
+Docker (`dockerd`) and OCI container runtimes (`runc`) cannot function merely through user-space path translation. Docker strictly requires genuine kernel-level virtualization and process isolation.
 
-### 1.2 Tabel Panggilan Sistem (Syscall): Kebutuhan Docker vs Kenyataan PRoot di Android
+### 1.2 System Call Audit: Docker Requirements vs Android PRoot Reality
 
-| Syscall / Fitur | Kebutuhan Docker / runc | Hasil Terukur di Android Termux (Host) | Perilaku PRoot | Dampak pada Docker |
+| Syscall / Feature | Docker / runc Requirement | Measured Result on Android Termux (Host) | PRoot Behavior | Impact on Docker |
 |---|---|---|---|---|
-| `mount(2)` (overlayfs) | Mount layer image `overlay` (`lowerdir`, `upperdir`, `workdir`) | **SIGSYS (Signal 31)** dari seccomp Android, atau `EPERM` (`CapEff=0`) | Mencegat dan mengembalikan `rc=0` palsu tanpa membuat VFS mount nyata | `dockerd` mengira mount sukses, tetapi direktori merged kosong; runc crash saat membuat container rootfs |
-| `mount(2)` (`cgroup2`, `tmpfs`) | Mount `/sys/fs/cgroup` dan `/run`, `/dev/shm` | **SIGSYS / EPERM** | Mengembalikan `rc=0` palsu atau no-op | Layanan init & kontrol grup tidak terpasang di filesystem |
-| `unshare(CLONE_NEWUSER)` | Membuat user namespace mandiri (rootless mode) | **EINVAL** (kernel Android menonaktifkan unprivileged user ns) | Tidak mampu memvirtualisasikan user namespace | Rootless docker gagal inisialisasi user namespace |
-| `unshare(CLONE_NEWNS \| CLONE_NEWPID \| CLONE_NEWNET)` | Isolasi filesystem, proses tree, dan antarmuka jaringan | **EPERM** (memerlukan `CAP_SYS_ADMIN` di host) | Menghapus flag namespace atau no-op, proses tetap di host namespace | Kontainer tidak terisolasi sama sekali; konflik PID & port |
-| `pivot_root(2)` | Menukar rootfs kontainer dan melepas host rootfs | **EINVAL / EPERM** (butuh `CAP_SYS_ADMIN` dan mount point nyata) | Dialihkan ke chroot biasa atau gagal | `runc` memverifikasi struktur mount point dan gagal mengamankan container jail |
-| Tulis cgroup v2 (`/sys/fs/cgroup`) | Menulis ke `cgroup.procs`, `cpu.max`, `memory.max`, `pids.max` | **Permission denied (`EACCES`)** (dimiliki oleh system/root Android) | Tidak ada emulasi cgroup di ptrace | Kontainer gagal membatasi CPU/Memory; dockerd menolak berjalan tanpa cgroup driver |
+| `mount(2)` (overlayfs) | Mounts container image layers (`lowerdir`, `upperdir`, `workdir`) | **SIGSYS (Signal 31)** from Android seccomp, or `EPERM` (`CapEff=0`) | Intercepts syscall and returns fake `rc=0` without creating genuine VFS mounts | `dockerd` assumes mount succeeded, but the merged directory is empty; runc crashes during rootfs initialization |
+| `mount(2)` (`cgroup2`, `tmpfs`) | Mounts `/sys/fs/cgroup`, `/run`, `/dev/shm` | **SIGSYS / EPERM** | Returns fake `rc=0` or no-op | Init systems and control groups fail to attach to filesystems |
+| `unshare(CLONE_NEWUSER)` | Allocates user namespace (rootless mode) | **EINVAL** (Android kernel disables unprivileged user namespaces) | Incapable of virtualizing user namespaces | Rootless Docker fails initialization |
+| `unshare(CLONE_NEWNS \| CLONE_NEWPID \| CLONE_NEWNET)` | Isolates filesystem, process tree, and network stack | **EPERM** (requires host `CAP_SYS_ADMIN`) | Strips namespace flags or acts as no-op; processes remain in host namespace | Containers have zero isolation; PID and port collisions occur |
+| `pivot_root(2)` | Swaps rootfs and detaches host filesystem | **EINVAL / EPERM** (requires `CAP_SYS_ADMIN` and genuine mountpoint) | Diverted to standard chroot or fails | `runc` verifies mountpoint topology and aborts container sandbox setup |
+| Write to cgroups v2 (`/sys/fs/cgroup`) | Writes to `cgroup.procs`, `cpu.max`, `memory.max`, `pids.max` | **Permission denied (`EACCES`)** (owned by Android system/root) | No cgroup emulation in ptrace | Containers fail resource governance; dockerd refuses to launch without a valid cgroup driver |
 
-### 1.3 Bahaya Kepalsuan PRoot (Deception Trap)
-Ketika aplikasi memanggil `mount(2)` di dalam PRoot, PRoot mengintersepsi panggilan tersebut dan mengembalikan status return `0` (sukses). Akibatnya:
-1. `dockerd` menganggap storage driver `overlay2` aktif.
-2. Ketika kontainer pertama dibuat, file layer tidak benar-benar digabung oleh kernel VFS. File biner di dalam container hilang atau tidak bisa dieksekusi.
-3. Menjalankan Docker di dalam PRoot adalah usaha yang keliru sejak awal secara arsitektural.
+### 1.3 The PRoot Deception Trap
+When applications call `mount(2)` inside PRoot, PRoot intercepts the call and returns `0` (success). Consequently:
+1. `dockerd` assumes the `overlay2` storage driver is active and functional.
+2. When the first container is spawned, layer files are never actually unified by the kernel VFS. Binary executables inside the container are missing or unexecutable.
+3. Attempting to run Docker inside pure PRoot is an architecturally flawed premise from the outset.
 
-### 1.4 Solusi UML (User-Mode Linux)
-`uml4termux` menjalankan kernel Linux sesungguhnya (`linux-bionic-smp`, arm64) sebagai proses pengguna Android tunggal:
-- Kernel guest mengelola tabel page virtual, scheduler, VFS, network stack, dan cgroup sendiri.
-- Di dalam guest, proses berjalan sebagai root sejati (`CapEff = 0x1fffffffff`).
-- Panggilan `mount(overlay)`, `unshare(CLONE_NEWNS)`, `pivot_root`, dan penulisan `/sys/fs/cgroup` dieksekusi langsung oleh kernel guest UML, bukan oleh kernel host Android.
-- Host Android hanya melihat thread komputasi biasa dan socket jaringan loopback (`gvproxy`).
+### 1.4 The User-Mode Linux (UML) Solution
+`uml4termux` runs a genuine Linux kernel (`linux-bionic-smp`, arm64) as a single unprivileged Android user process:
+- The guest kernel manages its own virtual page tables, process scheduler, VFS, networking stack, and cgroup controllers.
+- Inside the guest, processes execute with genuine root capabilities (`CapEff = 0x1fffffffff`).
+- Syscalls like `mount(overlay)`, `unshare(CLONE_NEWNS)`, `pivot_root`, and writes to `/sys/fs/cgroup` are executed directly by the UML guest kernel, not the host Android kernel.
+- The Android host only observes a standard compute thread and a loopback networking socket (`gvproxy`).
 
 ---
 
-## 2. Audit Antarmuka Daemon `uml4termuxd`
+## 2. Daemon Interface Audit: `uml4termuxd`
 
-### 2.1 Arsitektur & Topologi Komunikasi
-Daemon pengawas `uml4termuxd` (atau kembarannya `uml4termux-rs daemon`) mengelola siklus hidup VM UML dan mengekspos UNIX domain socket lokal.
+### 2.1 Architecture & Communication Topology
+The supervisor daemon `uml4termuxd` (or its twin `uml4termux-rs daemon`) governs the lifecycle of the UML VM and exposes a local UNIX domain socket.
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -64,43 +64,36 @@ Daemon pengawas `uml4termuxd` (atau kembarannya `uml4termux-rs daemon`) mengelol
 ```
 
 - **Socket Path:** `${UML4TERMUX_RUNTIME}/daemon.sock` (Default: `/data/data/com.termux/files/usr/tmp/uml4termux/daemon.sock`).
-- **Izin File:** Mode `0600`, umask daemon `0077`.
-- **Autentikasi:** Mencegah koneksi silang uid menggunakan verifikasi `SO_PEERCRED` (`cr.uid == geteuid()`). Setiap permintaan dicatat di `${UML4TERMUX_RUNTIME}/audit.log`.
+- **File Permissions:** Mode `0600`, daemon umask `0077`.
+- **Authentication:** Prevents cross-UID connections via `SO_PEERCRED` verification (`cr.uid == geteuid()`). Every request is logged in `${UML4TERMUX_RUNTIME}/audit.log`.
 
-### 2.2 Wire Protocol (Kontrak Runtime v1)
-Klien mengirim **satu baris teks** yang diakhiri `\n`. Daemon menjawab dengan **satu baris JSON** yang diakhiri `\n` lalu menutup channel penulisan.
+### 2.2 Wire Protocol (Runtime Contract v1)
+Clients send **a single line of text** terminated by `\n`. The daemon responds with **a single JSON line** terminated by `\n`, then shuts down the write stream.
 
-Daftar Perintah Protokol:
-1. `protocol`  
-   Respon: `{"protocol":1,"runtime_contract":1,"commands":["status","stop","ports","expose","exec","protocol"]}`
-2. `status`  
-   Respon: `{"state":"running"|"completed"|"idle","child_pid":12345,"restarts":0,"kernel":"...","mem":"1024M","ncpus":"4","uptime_s":120}`
-3. `stop`  
-   Respon: `{"state":"stopping"}` (mengirim SIGTERM/sysrq ke guest)
-4. `ports`  
-   Respon: `{"exposures":["127.0.0.1:8080 -> 192.168.127.2:80"]}`
-5. `expose <host_port> <guest_port>`  
-   Respon: `{"exposed":"127.0.0.1:<host_port> -> 192.168.127.2:<guest_port>"}` atau galat `{"error":"..."}`
-6. `exec <perintah>`  
-   Menjalankan perintah di dalam guest shell via saluran konsol PTY.
+Protocol Commands:
+1. `protocol` -> `{"protocol":1,"runtime_contract":1,"commands":["status","stop","ports","expose","exec","protocol"]}`
+2. `status` -> `{"state":"running"|"completed"|"idle","child_pid":12345,"restarts":0,"kernel":"...","mem":"1024M","ncpus":"4","uptime_s":120}`
+3. `stop` -> `{"state":"stopping"}` (sends SIGTERM/sysrq to guest)
+4. `ports` -> `{"exposures":["127.0.0.1:8080 -> 192.168.127.2:80"]}`
+5. `expose <host_port> <guest_port>` -> `{"exposed":"127.0.0.1:<host_port> -> 192.168.127.2:<guest_port>"}`
+6. `exec <command>` -> Executes command in guest shell via PTY console channel.
 
-### 2.3 Mekanisme Pembungkusan Perintah (`exec`) & Penangkapan Output
-Daemon `uml4termuxd` **tidak** melakukan streaming stdout/stderr langsung di atas socket kontrol. Socket kontrol hanya memberikan konfirmasi pemanggilan perintah:
+### 2.3 Command Wrapping (`exec`) & Output Extraction
+The daemon `uml4termuxd` does not stream stdout/stderr directly over the control socket. The control socket confirms execution:
 ```c
 seq = ++g_exec_seq;
 snprintf(line, sizeof(line),
          "exec:echo __EXEC_%d_BEGIN__; %s; echo __EXEC_%d_DONE_$?\n",
          seq, req + 5, seq);
 write(g_ptym, line, strlen(line));
-// Balasan ke socket kontrol:
 snprintf(resp, sizeof(resp),
          "{\"started\":true,\"seq\":%d,\"console\":\"%s\"}\n",
          seq, g_consolelog);
 respond(fd, resp);
 ```
 
-#### Alur Eksekusi di Sisi Guest (`docker-init.sh`):
-Agent konsol membaca dari `/dev/console`:
+#### Guest Execution Flow (`docker-init.sh`):
+The console agent reads from `/dev/console`:
 ```sh
 ( while IFS= read -r aline; do
     case "$aline" in
@@ -111,46 +104,36 @@ Agent konsol membaca dari `/dev/console`:
     esac
   done ) < /dev/console &
 ```
-1. Agent mencetak konfirmasi: `__AGENT_GOT__: echo __EXEC_<seq>_BEGIN__; <perintah>; echo __EXEC_<seq>_DONE_$?`
-2. Agent mengevaluasi baris dalam subshell `( eval ... ) &`.
-3. Guest mencetak penanda awal: `__EXEC_<seq>_BEGIN__`.
-4. Perintah dieksekusi; seluruh output (stdout & stderr) mengalir ke konsol `/dev/console`.
-5. Guest mencetak penanda akhir dengan kode keluar nyata: `__EXEC_<seq>_DONE_$?` (contoh: `__EXEC_1_DONE_0` atau `__EXEC_1_DONE_127`).
-6. Daemon membaca PTY master dan menulis setiap baris log ke `${UML4TERMUX_RUNTIME}/uml-console.log`.
+1. Agent emits: `__AGENT_GOT__: echo __EXEC_<seq>_BEGIN__; <cmd>; echo __EXEC_<seq>_DONE_$?`
+2. Agent evaluates the line inside a subshell `( eval ... ) &`.
+3. Guest prints start marker: `__EXEC_<seq>_BEGIN__`.
+4. Output (stdout/stderr) streams to `/dev/console`.
+5. Guest prints completion marker with exit code: `__EXEC_<seq>_DONE_$?` (e.g. `__EXEC_1_DONE_0`).
+6. Daemon writes PTY master output to `${UML4TERMUX_RUNTIME}/uml-console.log`.
 
-#### Strategi Parsing di Sisi Klien (PDN Runtime):
-Untuk mengekstrak output dan status keluar secara deterministik:
-- Buka `${UML4TERMUX_RUNTIME}/uml-console.log`.
-- Cari posisi baris setelah `__EXEC_<seq>_BEGIN__`.
-- Tangkap semua baris hingga menemukan baris yang berawalan `__EXEC_<seq>_DONE_<rc>`.
-- Ekstrak nilai integer `<rc>` sebagai exit code proses.
+#### Client-side Parsing Strategy (PDN Runtime):
+- Open `${UML4TERMUX_RUNTIME}/uml-console.log`.
+- Locate the line immediately following `__EXEC_<seq>_BEGIN__`.
+- Accumulate output until reaching `__EXEC_<seq>_DONE_<rc>`.
+- Extract integer `<rc>` as the process exit code.
 
-### 2.4 Pembatasan & Penanganan Galat (Rate Limiting & Safety Invariants)
-Daemon menerapkan proteksi eksplisit yang **tidak boleh** dilewati pemanggil:
-1. **Batas Ukuran Baris Perintah (`WM_EXEC_MAX` = 2000 byte):**  
-   Jika perintah > 2000 byte, daemon menolak dengan respon:
-   `{"error":"command too long","limit":2000}` (klien keluar status 64). Klien PDN wajib menolak perintah sebelum memotongnya diam-diam.
-2. **Pembatas Laju Pemanggilan (`exec_rate_limited`):**  
-   Interval minimum antar perintah diatur oleh `UML4TERMUXD_EXEC_MIN_INTERVAL_MS` (default 100 ms).  
-   Jika perintah dikirim terlalu cepat, daemon menolak dengan respon:
-   `{"error":"rate-limited","min_interval_ms":100}`  
-   Klien PDN wajib melakukan backoff retry (tidur selama `min_interval_ms`) bukan gagal seketika.
-3. **Kesiapan Guest (`guest not running`):**  
-   Jika child UML mati atau PTY belum aktif: `{"error":"guest not running"}`.
-4. **Lock Backing Image Eksklusif (`F_SETLK`):**  
-   UML mengunci image secara eksklusif. Jangan pernah membakar dua proses pada image backing yang sama tanpa COW overlay (`UML4TERMUXD_COW`).
+### 2.4 Safety Invariants & Error Handling
+1. **Command Line Limit (`WM_EXEC_MAX` = 2000 bytes):** Commands exceeding 2000 bytes are rejected with `{"error":"command too long","limit":2000}`. PDN client validates length prior to sending.
+2. **Rate Limiting (`exec_rate_limited`):** Controlled by `UML4TERMUXD_EXEC_MIN_INTERVAL_MS` (default 100ms). Returns `{"error":"rate-limited","min_interval_ms":100}`. PDN client performs backoff retry.
+3. **Guest Readiness (`guest not running`):** Returned if UML child process has not started or PTY is closed.
+4. **Exclusive Backing Image Lock (`F_SETLK`):** UML takes an exclusive advisory lock on the image. Multiple instances must use copy-on-write overlays (`UML4TERMUXD_COW`).
 
 ---
 
-## 3. Desain Step 1: Trait `RuntimeBackend` untuk PDN
+## 3. Design Step 1: `RuntimeBackend` Trait for PDN
 
-### 3.1 Struktur Modul & Tipe Data (`crates/proot-distro-core/src/runtime.rs`)
+### 3.1 Module Definition (`crates/proot-distro-core/src/runtime.rs`)
 
 ```rust
-//! Abstraksi Runtime Backend untuk PDN (PRoot Distro Next)
+//! Runtime Backend Abstraction for PDN (PRoot Distro Next)
 //!
-//! Menyediakan antarmuka terpadu untuk mengeksekusi container melalui
-//! backend ptrace PRoot biasa maupun backend VM kernel User-Mode Linux (UML).
+//! Provides a unified interface for executing containers via either
+//! standard PRoot ptrace emulation or User-Mode Linux (UML) kernel backends.
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -162,13 +145,13 @@ use tokio::net::UnixStream;
 
 use crate::container::Container;
 
-/// Jenis backend runtime yang didukung
+/// Supported runtime backend variants
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RuntimeKind {
-    /// ptrace chroot ringan (default, tanpa isolasi namespace/cgroup sejati)
+    /// Lightweight PRoot ptrace chroot (default, no genuine kernel namespaces)
     Proot,
-    /// User-Mode Linux (kernel nyata, mendukung overlayfs, cgroups v2, Docker)
+    /// User-Mode Linux (genuine Linux kernel supporting overlayfs, cgroups v2, Docker)
     Uml,
 }
 
@@ -178,7 +161,7 @@ impl Default for RuntimeKind {
     }
 }
 
-/// Status kesehatan dan kapabilitas backend runtime
+/// Runtime health status and capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeStatus {
     pub kind: RuntimeKind,
@@ -188,26 +171,26 @@ pub struct RuntimeStatus {
     pub details: String,
 }
 
-/// Trait utama antarmuka eksekusi container
+/// Primary container execution interface
 #[async_trait]
 pub trait RuntimeBackend: Send + Sync {
-    /// Mengembalikan identitas jenis runtime
+    /// Returns runtime kind identity
     fn kind(&self) -> RuntimeKind;
 
-    /// Apakah backend ini menyediakan kernel Linux nyata dengan dukungan
-    /// namespace, cgroup v2, dan overlayfs (diperlukan untuk Docker).
+    /// Indicates whether this backend provides a genuine Linux kernel
+    /// supporting namespaces, cgroups v2, and overlayfs (required for Docker).
     fn supports_kernel_features(&self) -> bool;
 
-    /// Mengeksekusi perintah di dalam environment container
+    /// Executes a command inside the container environment
     async fn execute(&self, container: &Container, command: Vec<String>) -> Result<i32>;
 
-    /// Memeriksa status kesiapan backend
+    /// Queries backend readiness status
     async fn status(&self) -> Result<RuntimeStatus>;
 }
 ```
 
-### 3.2 Implementasi `ProotBackend`
-Memindahkan logika eksekusi PRoot yang saat ini berada di `ContainerManager::execute`:
+### 3.2 `ProotBackend` Implementation
+Encapsulates existing PRoot execution logic from `ContainerManager::execute`:
 
 ```rust
 use crate::sysdata;
@@ -243,7 +226,7 @@ impl RuntimeBackend for ProotBackend {
     }
 
     fn supports_kernel_features(&self) -> bool {
-        false // PRoot tidak memiliki namespace kernel sejati atau cgroup
+        false
     }
 
     async fn execute(&self, container: &Container, command: Vec<String>) -> Result<i32> {
@@ -302,8 +285,8 @@ impl RuntimeBackend for ProotBackend {
 }
 ```
 
-### 3.3 Implementasi `UmlBackend`
-Klien berbasis socket UNIX ke `uml4termuxd` dengan penanganan kontrak v1:
+### 3.3 `UmlBackend` Implementation
+Client communicating with `uml4termuxd` over UNIX domain sockets:
 
 ```rust
 pub struct UmlBackend {
@@ -372,17 +355,15 @@ impl RuntimeBackend for UmlBackend {
     }
 
     fn supports_kernel_features(&self) -> bool {
-        true // Kernel UML menyediakan isolasi namespace, cgroup v2, dan overlayfs sejati
+        true
     }
 
     async fn execute(&self, _container: &Container, command: Vec<String>) -> Result<i32> {
-        // Gabungkan perintah
         let joined_cmd = command.join(" ");
         if joined_cmd.len() > 2000 {
             bail!("Command too long for uml4termux console channel (limit 2000 bytes, got {})", joined_cmd.len());
         }
 
-        // Kirim perintah exec ke daemon
         let exec_req = format!("exec {}", joined_cmd);
         let resp = self.request_with_retry(&exec_req).await?;
 
@@ -392,7 +373,6 @@ impl RuntimeBackend for UmlBackend {
             .map(PathBuf::from)
             .unwrap_or_else(|| self.socket_path.parent().unwrap().join("uml-console.log"));
 
-        // Tunggu dan parsing console log untuk penanda __EXEC_<seq>_BEGIN__ dan __EXEC_<seq>_DONE_<rc>
         let done_marker = format!("__EXEC_{}_DONE_", seq);
         let begin_marker = format!("__EXEC_{}_BEGIN__", seq);
 
@@ -456,11 +436,10 @@ impl RuntimeBackend for UmlBackend {
 }
 ```
 
-### 3.4 Pendelegasian pada `ContainerManager::execute`
-Di `crates/proot-distro-core/src/container.rs`:
+### 3.4 Delegation in `ContainerManager::execute`
+In `crates/proot-distro-core/src/container.rs`:
 
 ```rust
-// Tambahkan field runtime di ContainerConfig
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainerConfig {
     pub name: String,
@@ -468,11 +447,10 @@ pub struct ContainerConfig {
     pub version: String,
     #[serde(default)]
     pub runtime: crate::runtime::RuntimeKind, // "proot" | "uml"
-    // ... field lainnya
+    // ...
 }
 
 impl ContainerManager {
-    /// Mengambil backend runtime yang sesuai untuk kontainer
     pub fn get_backend(&self, container: &Container) -> Box<dyn crate::runtime::RuntimeBackend> {
         match container.config.runtime {
             crate::runtime::RuntimeKind::Proot => Box::new(crate::runtime::ProotBackend::new()),
@@ -480,7 +458,6 @@ impl ContainerManager {
         }
     }
 
-    /// Eksekusi mendelegasikan langsung ke trait RuntimeBackend
     pub async fn execute(&self, name: &str, command: Vec<String>) -> Result<i32> {
         let container = self.get(name).await?;
         let backend = self.get_backend(&container);
@@ -489,60 +466,26 @@ impl ContainerManager {
 }
 ```
 
-### 3.5 Pendelegasian pada `podnext login` dan `podnext run`
-Di `crates/podnext/src/native.rs` dan `crates/podnext/src/main.rs`:
-- Opsi CLI baru: `--runtime <proot|uml>`.
-- Jika argumen `--runtime` diberikan, menimpa pilihan `container.config.runtime`.
-- Pemanggilan `login_container_native` dan `run_container_native` memanggil `ContainerManager::execute`, yang secara transparan memilih driver yang tepat.
+### 3.5 Implementation of `podnext docker` Subcommand
+In `crates/podnext/src/main.rs`:
 
 ```rust
-// Contoh di crates/podnext/src/native.rs:
-pub async fn run_container_with_runtime(
-    container_name: &str,
-    command: Vec<String>,
-    runtime_override: Option<RuntimeKind>,
-) -> Result<()> {
-    let container_mgr = proot_distro_core::ContainerManager::new()?;
-    let mut container = container_mgr.get(container_name).await?;
-
-    if let Some(rt) = runtime_override {
-        container.config.runtime = rt;
-    }
-
-    let backend = container_mgr.get_backend(&container);
-    let exit_code = backend.execute(&container, command).await?;
-    if exit_code != 0 {
-        return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
-    }
-    Ok(())
-}
-```
-
-### 3.6 Implementasi Perintah `podnext docker` & Verifikasi Kernel Features
-Di `crates/podnext/src/main.rs`:
-
-```rust
-// 1. Tambahkan varian di enum Commands:
 #[derive(Subcommand, Debug)]
 enum Commands {
     // ...
     /// Run Docker commands transparently via kernel-capable runtime (UML)
     Docker {
-        /// Container or instance name (optional, defaults to active uml instance)
         #[arg(short, long)]
         container: Option<String>,
 
-        /// Arguments passed through to the docker CLI
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
 }
 
-// 2. Handler cmd_docker:
 async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
 
-    // Jika container tidak disebutkan, gunakan backend UML global
     let backend: Box<dyn proot_distro_core::runtime::RuntimeBackend> = if let Some(ref name) = container_name {
         let c = container_mgr.get(name).await?;
         container_mgr.get_backend(&c)
@@ -550,7 +493,6 @@ async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result
         Box::new(proot_distro_core::runtime::UmlBackend::new())
     };
 
-    // VERIFIKASI UTAMA: Penolakan eksplisit jika backend tidak mendukung fitur kernel
     if !backend.supports_kernel_features() {
         bail!(
             "The configured runtime backend '{}' does not support kernel features required by Docker.\n\
@@ -560,13 +502,11 @@ async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result
         );
     }
 
-    // Pastikan backend sedang aktif
     let status = backend.status().await?;
     if !status.running {
         bail!("UML kernel runtime is not running. Please start it with 'uml4termux up'.");
     }
 
-    // Passthrough ke binary docker di guest
     let mut docker_cmd = vec!["docker".to_string()];
     docker_cmd.extend(args);
 
@@ -581,58 +521,20 @@ async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result
 
 ---
 
-## 4. Verifikasi Status Live `uml4termux` di Perangkat Ini
+## 4. Hardware & Software Assets Verified on Host
 
-Hasil audit empiris langsung pada perangkat (Android 16, aarch64, uid 10396):
-
-### 4.1 Ketersediaan Biner
-- **CLI Global:** `/data/data/com.termux/files/usr/bin/uml4termux` (symlink ke `/data/data/com.termux/files/usr/share/uml4termux/bin/uml4termux`) → **Tersedia (v0.3.0+)**.
-- **Daemon C:** `/data/data/com.termux/files/home/workspace/uml4termux/bin/uml4termuxd` → **Tersedia (siap eksekusi)**.
-- **CLI/Daemon Rust Twin:** `/data/data/com.termux/files/home/workspace/uml4termux/rust/target/release/uml4termux-rs` → **Tersedia (siap eksekusi)**.
-
-### 4.2 Artefak & Asset Image
-Direktori Asset: `/data/data/com.termux/files/home/.local/share/uml4termux/`
-- `linux-bionic-smp` (13.2 MB, SHA256 verified): Kernel arm64 dengan dukungan `OVERLAY_FS`, `NETFILTER`, `BRIDGE`, `CGROUP_PIDS`, `MEMCG`.
-- `debian-docker.ext4.gz` (245 MB): Image Debian 12 berisi instalasi Docker Engine 20.10.24, containerd, runc, dan BuildKit.
-- `initramfs-alpine.cpio.gz` (3.8 MB): Root bootstrap awal.
-- `gvproxy` (12.7 MB): Stack jaringan user-mode BESS + port forwarder.
-- `stub_exe` (2 KB): Executable loader untuk Android sandbox.
-
-### 4.3 Status Layanan & Socket Saat Ini
-- `uml4termux ls`: `no instances registered`.
-- File socket kontrol `${TMPDIR}/uml4termux/daemon.sock`: Belum aktif (proses idle).
-- Runit service `/data/data/com.termux/files/usr/var/service/`: Tidak ada entri aktif untuk uml4termux (layanan dikontrol secara manual on-demand via `uml4termux up`).
-
-### 4.4 Prosedur Menyalakan Runtime UML
-Untuk mengaktifkan runtime backend sebelum pengujian passthrough:
-```bash
-uml4termux up --mem 1024M --ssh-port 12222
-```
-Perintah ini akan:
-1. Memverifikasi integritas hash file asset.
-2. Membuat sparse COW file dari `debian-docker.ext4.gz`.
-3. Membuka socket UNIX di `${UML4TERMUX_RUNTIME}/daemon.sock` (mode 0600).
-4. Menjalankan gvproxy pada port 12222.
-5. Menjalankan `linux-bionic-smp` dengan virtual ethernet `vec0` dan konsol PTY.
-6. Menginisialisasi dockerd dan melaporkan `DOCKERD_READY_FOR_REAL`.
+- **Global CLI:** `/data/data/com.termux/files/usr/bin/uml4termux` (v0.3.0+ available).
+- **C Daemon Binary:** `/data/data/com.termux/files/home/workspace/uml4termux/bin/uml4termuxd`.
+- **Rust Client/Daemon:** `/data/data/com.termux/files/home/workspace/uml4termux/rust/target/release/uml4termux-rs`.
+- **Assets (`~/.local/share/uml4termux/`):**
+  - `linux-bionic-smp` (13.2 MB, SHA256 verified): arm64 UML kernel with `OVERLAY_FS`, `NETFILTER`, `CGROUP_PIDS`, `MEMCG`.
+  - `debian-docker.ext4.gz` (245 MB): Debian 12 rootfs with Docker Engine 20.10.24, containerd, runc, BuildKit.
+  - `gvproxy` (12.7 MB): User-mode BESS networking and port forwarder.
 
 ---
 
-## 5. Rencana Penerapan (Execution Roadmap)
+## 5. Execution Phasing
 
-### Fase 1: Refactoring Abstraksi Runtime (Tanpa Perubahan Perilaku)
-1. Buat berkas `crates/proot-distro-core/src/runtime.rs`.
-2. Pindahkan logika proot dari `ContainerManager::execute` ke `ProotBackend`.
-3. Pasang delegasi di `ContainerManager::execute`.
-4. Jalankan rangkaian tes PDN untuk memastikan 100% kompatibilitas tetap hijau.
-
-### Fase 2: Implementasi Klien `UmlBackend`
-1. Lengkapi parsing respon `protocol`, `status`, dan `exec` di `UmlBackend`.
-2. Tambahkan tailing parser untuk `uml-console.log` berdasarkan marker `__EXEC_<seq>_BEGIN__` dan `__EXEC_<seq>_DONE_<rc>`.
-3. Implementasikan retry otomatis saat menerima error `rate-limited`.
-
-### Fase 3: Integrasi CLI `podnext docker` & Metadata Container
-1. Tambahkan field `"runtime": "proot" | "uml"` pada `metadata.json` container.
-2. Tambahkan subcommand `podnext docker` di `crates/podnext/src/main.rs`.
-3. Tegakkan pengecekan `backend.supports_kernel_features()`. Jika backend adalah PRoot, tolak dengan pesan kesalahan yang jelas.
-4. Lakukan pengujian langsung: `podnext docker run --rm hello-world`.
+1. **Phase 1: Runtime Abstraction Refactoring**: Create `crates/proot-distro-core/src/runtime.rs`, migrate logic to `ProotBackend`, verify existing tests.
+2. **Phase 2: `UmlBackend` Client Implementation**: Wire `protocol`, `status`, `exec` socket communication and log parsing.
+3. **Phase 3: `podnext docker` CLI Integration**: Enforce `backend.supports_kernel_features()` check and pass through commands to guest `dockerd`.

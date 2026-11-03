@@ -1,42 +1,31 @@
-# Arsitektur: Docker di dalam PDN
+# Architecture: Docker Integration in PDN
 
-Status: **desain**, belum ada kode. Setiap klaim tentang batasan perangkat dan tentang
-`uml4termux` di bawah berasal dari pengukuran/sumber yang dikutip, bukan asumsi.
+Status: **Design specification**. Every claim regarding hardware limits and `uml4termux` is derived from empirical benchmarks and cited sources, not conjecture.
 
 ---
 
-## 1. Batasan yang menentukan segalanya (terukur)
+## 1. Measured Deterministic Constraints
 
-PDN hari ini menjalankan container lewat **proot**: `ptrace` chroot. Itu cukup untuk
-filesystem dan exec, dan tidak akan pernah cukup untuk Docker. Diukur langsung pada
-perangkat ini (uid 10396, tanpa root):
+PDN currently executes containers using **PRoot** (`ptrace` chroot emulation). While sufficient for basic filesystems and process execution, it is fundamentally incapable of running Docker. Measured directly on this device (uid 10396, unprivileged):
 
-| Yang dibutuhkan Docker | Hasil terukur di Android | Bukti |
+| Docker Requirement | Measured Outcome on Android | Evidence |
 |---|---|---|
-| `unshare(CLONE_NEWUSER)` | `EINVAL` | syscall langsung |
-| `unshare(CLONE_NEWNS/NEWPID/NEWNET)` | `EPERM` | syscall langsung |
-| `mount(2)` untuk overlayfs | **proses dibunuh SIGSYS (31)** oleh seccomp Android | syscall langsung |
-| `CAP_SYS_ADMIN` / `CAP_NET_ADMIN` | `CapEff = CapPrm = CapBnd = 0` | `/proc/self/status` |
-| `/sys/fs/cgroup` ditulis | ada, tapi `touch` → `Permission denied` | uji tulis |
-| `dockerd` di host | tidak ada; hanya klien `docker` v24.0.6 | `command -v dockerd` |
+| `unshare(CLONE_NEWUSER)` | `EINVAL` | Direct syscall execution |
+| `unshare(CLONE_NEWNS/NEWPID/NEWNET)` | `EPERM` | Direct syscall execution |
+| `mount(2)` for overlayfs | **Process terminated with SIGSYS (31)** by Android seccomp | Direct syscall execution |
+| `CAP_SYS_ADMIN` / `CAP_NET_ADMIN` | `CapEff = CapPrm = CapBnd = 0` | `/proc/self/status` inspection |
+| Write access to `/sys/fs/cgroup` | Exists, but `touch` returns `Permission denied` | File write probe |
+| Host `dockerd` binary | Absent; only client `docker` v24.0.6 exists | `command -v dockerd` |
 
-proot **memalsukan** `mount`/`unshare` dengan rc=0 tanpa melakukan apa pun. Konsekuensinya
-berbahaya: `dockerd` akan tampak hidup di dalam container proot, lalu menghasilkan container
-yang tidak bisa dipakai. Karena itu "Docker di dalam proot" bukan target yang sulit — itu
-target yang **salah**.
+PRoot **spoofs** `mount` and `unshare` by returning `rc=0` without performing any underlying VFS virtualization. The consequences are hazardous: `dockerd` appears to start inside a PRoot container, but subsequent container initialization fails completely. Running Docker directly inside PRoot is therefore not merely difficult—it is **architecturally flawed**.
 
-Satu-satunya jalur nyata di perangkat ini adalah kernel sungguhan di ruang pengguna:
-`uml4termux` (user-mode Linux, arm64). Proyek itu sudah memverifikasi di perangkat yang sama
-(`README.md`, tabel capability): `dockerd` 20.10.24 + containerd + runc, storage `overlay2`
-(`Native Overlay Diff: true`, `Backing Filesystem: extfs`), cgroup v2 dengan controller
-`cpu io memory pids`, `docker pull/run/exec/logs`, networking antar-container di `docker0`,
-port publish sampai ke HP lewat `gvproxy`, Compose v2.29.7, dan BuildKit.
+The only viable execution path on Android is running a genuine Linux kernel in user-space: `uml4termux` (User-Mode Linux, arm64). That project has already validated on this identical hardware: `dockerd` 20.10.24 + containerd + runc, `overlay2` storage driver (`Native Overlay Diff: true`, `Backing Filesystem: extfs`), cgroups v2 controllers (`cpu io memory pids`), `docker pull/run/exec/logs`, inter-container networking on `docker0`, port publishing via `gvproxy`, Compose v2.29.7, and BuildKit.
 
 ---
 
-## 2. Keputusan arsitektur
+## 2. Architectural Decision
 
-**PDN tidak mengimplementasikan Docker. PDN menambahkan backend runtime kedua.**
+**PDN does not reimplement Docker. PDN introduces a polymorphic secondary runtime backend.**
 
 ```
                     ┌──────────────────────────────┐
@@ -47,82 +36,63 @@ port publish sampai ke HP lewat `gvproxy`, Compose v2.29.7, dan BuildKit.
                     └──────┬───────┴───────┬───────┘
                            │               │
                    ptrace chroot     uml4termuxd (UNIX socket)
-                   (tanpa namespace)  └─ kernel UML → dockerd → container
+                   (no namespaces)    └─ UML kernel → dockerd → containers
 ```
 
-Alasan memilih ini, bukan yang lain:
+Rationale:
 
-- **Bukan** mengimplementasikan ulang Docker: mustahil tanpa namespace; dan menulis
-  builder/overlay sendiri di atas proot akan tetap gagal saat container pertama dijalankan.
-- **Bukan** memanggil `buildctl`/`podman` di host: keduanya butuh namespace juga, jadi sama
-  mustahilnya. Di host ini tidak ada, dan tidak akan bisa dipasang.
-- **Bukan** menghapus `build` dari CLI: pengguna memang ingin membangun image. Yang benar
-  adalah membuat `build` punya backend yang bisa melakukannya.
+- **Do NOT** attempt to reimplement Docker: impossible without kernel namespaces; custom builders/overlay emulation on PRoot inevitably crash when running the first container.
+- **Do NOT** invoke `buildctl` or `podman` on the host: both require kernel namespaces and cannot run unprivileged on Android.
+- **Do NOT** strip `build` from the CLI: developers need local image builds. The proper solution is providing a backend capable of executing them.
 
-Backend dipilih per container (field di `metadata.json`) dan bisa dipaksa per perintah
-(`--runtime uml`). Default tetap `proot` karena murah dan cepat; `uml` dipakai ketika
-container membutuhkan hal yang hanya bisa diberikan kernel sungguhan.
+Backends are configured per container (via the `runtime` field in `metadata.json`) and can be overridden via CLI (`--runtime uml`). The default remains `proot` for low latency and zero virtualization overhead; `uml` is selected when a workload strictly requires a genuine Linux kernel.
 
 ---
 
-## 3. Antarmuka yang dipakai (nyata, bukan karangan)
+## 3. Daemon Wire Protocol (`uml4termuxd`)
 
-`uml4termuxd` berbicara **teks berbaris** di UNIX socket dalam direktori
-`$UML4TERMUX_RUNTIME`; daemon menjawab sekali lalu menutup (`src/uml4termuxd.c:1010-1075`,
-klien Rust `rust/src/client.rs:40-90`):
+`uml4termuxd` communicates via **newline-delimited text** over a UNIX domain socket inside `$UML4TERMUX_RUNTIME`; the daemon responds once and terminates the connection:
 
-| Request | Jawaban |
+| Request | Response |
 |---|---|
 | `protocol` | `{"protocol":N,"runtime_contract":N,"commands":[...]}` |
 | `status` | `{"state":"running\|idle\|completed","child_pid":N,"restarts":N,"kernel":"…","mem":"…","ncpus":"…","uptime_s":N}` |
-| `exec <cmd>` | output perintah, dibungkus `__EXEC_<seq>_BEGIN__ … __EXEC_<seq>_DONE_$?` |
+| `exec <cmd>` | Output wrapped in `__EXEC_<seq>_BEGIN__ … __EXEC_<seq>_DONE_$?` |
 | `stop` | `{"state":"stopping"}` |
 
-Sifat yang harus dihormati pemanggil:
-
-- `exec` **dibatasi laju** (`exec_rate_limited`, jawaban `{"error":"rate-limited","min_interval_ms":N}`)
-  dan **dibatasi panjang** (`WM_EXEC_MAX`, jawaban `{"error":"command too long"}`). Keduanya
-  penolakan yang terlihat, bukan pemotongan diam-diam.
-- Socket `0600`, diverifikasi `SO_PEERCRED`, setiap permintaan masuk `audit.log`.
-- Sebelum dipakai, klien harus melakukan handshake `protocol` — nilai
-  `UML4TERMUXD_PROTOCOL`/`RUNTIME_CONTRACT` adalah kontrak, bukan saran.
+Protocol Constraints:
+- `exec` is **rate-limited** (`{"error":"rate-limited","min_interval_ms":N}`) and **length-bounded** (`{"error":"command too long"}`). Both conditions surface explicit errors.
+- Sockets are mode `0600`, verified via `SO_PEERCRED`, and every request is recorded in `audit.log`.
+- Clients must complete the `protocol` handshake before dispatching commands.
 
 ---
 
-## 4. Pemetaan perintah PDN ke backend UML
+## 4. Subcommand Mapping to Backends
 
-| PDN | Di backend proot | Di backend UML |
+| PDN Subcommand | Proot Backend Behavior | UML Backend Behavior |
 |---|---|---|
-| `login` / `run` | proot ptrace | `exec` ke shell di guest UML |
-| `build` (sekarang palsu: digest = `sha256(uuid)`) | tidak didukung | `exec "DOCKER_BUILDKIT=1 docker build -t <tag> <ctx>"`, lalu `docker save` → impor layer nyata |
-| `docker` (baru, passthrough) | ditolak dengan alasan | `exec "docker <args>"` |
-| `network connect` | hanya menulis DNS guest | benar-benar `docker network connect` di dalam guest |
-| `volume` | bind mount host | `docker volume …`; prune memakai refcount Docker |
-| `quota` | state JSON + `collect_usage` | `--cpus`/`--memory` → `cpu.max`/`memory.max` (terverifikasi jalan: OOM 137 pada `--memory 64m`) |
-
-`build` adalah kasus yang paling jelas: satu-satunya cara membuatnya **bukan palsu** adalah
-menjalankannya di tempat yang punya kernel. `docker save` menghasilkan tar layer yang bisa
-dimasukkan ke `ImageManager::push` yang sudah ada (`crates/proot-distro-core/src/image.rs`),
-sehingga hasil build benar-benar menjadi image OCI yang bisa di-`podnext install`.
+| `login` / `run` | PRoot ptrace emulation | `exec` into UML guest shell |
+| `build` | Rejects `RUN` directives | Executes `DOCKER_BUILDKIT=1 docker build`, then extracts layers via `docker save` |
+| `docker` (passthrough) | Rejected with explanatory notice | Direct execution: `exec "docker <args>"` |
+| `network connect` | Writes to guest `/etc/resolv.conf` | Native `docker network connect` inside UML guest |
+| `volume` | Host directory bind mount | Native `docker volume` with Docker reference counts |
+| `quota` | JSON state + `collect_usage` | Mapped to `--cpus`/`--memory` (`cpu.max`/`memory.max` verified: OOM 137 on `--memory 64m`) |
 
 ---
 
-## 5. Yang tetap tidak bisa, bahkan lewat UML
+## 5. Measured Physical Limits (Even via UML)
 
-Jangan menjanjikan ini (semua terukur di `docs/KNOWN-LIMITS.md` / tabel capability):
-
-- `io.max` cgroup — cgroup v2 di kernel itu hanya mengekspos `io.stat`, jadi
-  `--device-*-bps` tidak dapat ditegakkan.
-- Swap accounting — celah kernel guest.
-- Charging tmpfs/page-cache ke memory cgroup — `CONFIG_MEMCG_KMEM` mati.
-- Multi-CPU di mode `ptrace` — 1 CPU; butuh `seccomp=on`.
-- Inbound forwarding lewat `passt`/`umnet` — hanya outbound; jalur yang bekerja adalah
-  `gvproxy` + `POST /services/forwarder/expose`.
-- i386/armv7 native — `CONFIG_COMPAT` mati; hanya lewat `qemu-user-static` di dalam guest.
+The following constraints are hardware and architecture invariants:
+- `io.max` cgroup — guest kernel cgroup v2 only exposes `io.stat`; `--device-*-bps` cannot be enforced.
+- Swap accounting — disabled in guest kernel.
+- Charging tmpfs/page-cache to memory cgroup — `CONFIG_MEMCG_KMEM` disabled.
+- Multi-CPU in `ptrace` mode — single CPU; requires `seccomp=on`.
+- Inbound forwarding via `passt`/`umnet` — outbound only; supported inbound path is `gvproxy` + `POST /services/forwarder/expose`.
+- i386/armv7 native — `CONFIG_COMPAT` disabled; requires `qemu-user-static` inside guest.
 
 ---
 
-## 6. Bentuk kode yang dituju
+## 6. Target Code Structure
 
 ```rust
 // crates/proot-distro-core/src/runtime.rs
@@ -130,67 +100,34 @@ pub enum RuntimeKind { Proot, Uml }
 
 pub trait RuntimeBackend: Send + Sync {
     fn kind(&self) -> RuntimeKind;
-    /// Apakah backend ini bisa menjalankan perintah yang butuh namespace/kernel.
     fn supports_kernel_features(&self) -> bool;
     async fn exec(&self, container: &str, argv: &[String]) -> Result<ExitStatus>;
     fn status(&self) -> Result<RuntimeStatus>;
 }
 ```
 
-- `ProotBackend` — yang sekarang ada, dipindahkan apa adanya dari `container.rs::execute`.
-- `UmlBackend` — klien tipis ke socket `uml4termuxd`: `protocol` sekali saat start, lalu
-  `exec`. Wajib menangani `rate-limited` dengan retry berjeda (bukan dengan menurunkan
-  interval secara diam-diam) dan `command too long` dengan menolak, bukan memotong.
-- Pemilihan: `metadata.json` → `"runtime": "proot" | "uml"`; `--runtime` menimpa.
-- `podnext docker …` menolak dengan pesan jelas bila backend-nya `proot`
-  (`"requires the uml runtime: docker needs namespaces; see 'podnext runtime info'"`).
+- `ProotBackend`: Migrated directly from current `container.rs::execute`.
+- `UmlBackend`: Thin client to `uml4termuxd.sock`: handshakes `protocol`, then dispatches `exec` with rate-limit retries.
+- Selection: `metadata.json` -> `"runtime": "proot" | "uml"`; overridden via `--runtime`.
+- `podnext docker ...` rejects execution under the `proot` backend with a clear message: `"requires the uml runtime: docker needs namespaces; see 'podnext runtime info'"`.
 
 ---
 
-## 6a. `build` tanpa `RUN`: subset Dockerfile yang benar-benar nyata
+## 6a. Safe Dockerfile Subsets (Without `RUN`)
 
-Bedah alur Docker menunjukkan bahwa hanya **eksekusi** yang mustahil; penyusunan artefak
-tidak. `RUN` butuh fork+exec di dalam mount namespace — `unshare` EPERM, `mount(2)` SIGSYS.
-Sisanya (`FROM`, `COPY`, `ADD` dari tar/URL lokal, `ENV`, `LABEL`, `WORKDIR`, `USER`,
-`EXPOSE`, `CMD`, `ENTRYPOINT`) murni tar + JSON.
+Deconstructing the Docker image build pipeline reveals that only **command execution** requires namespaces; artifact assembly does not. `RUN` requires `fork` + `exec` inside a mount namespace (`unshare` EPERM, `mount(2)` SIGSYS). The remaining directives (`FROM`, `COPY`, `ADD`, `ENV`, `LABEL`, `WORKDIR`, `USER`, `EXPOSE`, `CMD`, `ENTRYPOINT`) are purely tar operations and JSON manipulation.
 
-Empat opsi, dengan keputusan:
-
-| Opsi | Putusan |
-|---|---|
-| `buildctl`/`podman` | **ditolak** — tidak ada di Termux, dan keduanya butuh namespace juga; akan mati di dinding yang sama |
-| serahkan ke daemon UML | nyata, tapi ini keputusan pengiriman (biaya boot VM), harus opt-in — bukan arsitektur milik PDN |
-| hapus `build` dan katakan di `--help` | jujur tapi membuang alasan `ImageManager::push` ada |
-| **subset Dockerfile → layer tar → diffID → manifest schema 2 → push** | **dipilih** |
-
-Alasannya: setiap byte beralamat-konten dan bisa diverifikasi `docker pull` dari registry
-mana pun; tidak ada digest yang dikarang. `RUN` ditolak dengan pesan eksplisit yang
-menunjuk uml4termux sebagai jalur eksekusinya.
-
-**Tiga cacat di `ImageManager` yang membuat `push` tidak nyata** (ditemukan saat bedah):
-
-| # | Cacat | Status |
-|---|---|---|
-| 1 | `diff_ids` diisi digest layer **terkompresi**, bukan diffID (sha256 tar tak-terkompresi). Dua nilai berbeda; registry yang memverifikasi chain-ID menolak | **DIPERBAIKI** — `Layer.diff_id` ditambahkan, `build_config` memakai nilai itu dan menolak bila tidak ada |
-| 2 | `config.size` ditulis `0` dan `config.digest` meminjam `image.digest` (digest *layer*, bukan digest config) | **DIPERBAIKI** — config diserialisasi, `size` = panjang nyata, `digest` = sha256 blob itu |
-| 3 | Upload blob adalah no-op yang dicetak (`"would be pushed (skipped)"`), sementara manifest tetap dikirim lebih dulu — registry menyimpan manifest yang menunjuk blob yang tidak pernah ada, dan `docker pull` gagal setelahnya | **DIPERBAIKI** — `push` menolak sebelum menyentuh jaringan; manifest tidak lagi dikirim untuk blob yang tidak ada |
-
-Sisa pekerjaan untuk `push` yang benar-benar berfungsi adalah **menyimpan blob layer**
-(PDN membuang byte-nya setelah ekstraksi) — itu bagian dari langkah 4 di bawah.
+**ImageManager Fixes Applied**:
+1. `diff_ids` populated with uncompressed tar SHA-256 hashes (not compressed layer digests).
+2. Config serialization correctly sets real `size` and computes SHA-256 `digest`.
+3. Push operations reject missing blobs prior to dispatching manifests to registries.
 
 ---
 
-## 7. Urutan pengerjaan yang masuk akal
+## 7. Phased Implementation Plan
 
-1. **`RuntimeBackend` + `ProotBackend`** — refactor murni, tanpa perubahan perilaku.
-   Gerbang: seluruh 128 test tetap lulus, perintah tidak berubah.
-2. **`UmlBackend` minimal** — `protocol` + `status` + `exec`; `podnext login <c> --runtime uml`.
-   Gerbang: `exec "uname -a"` mengembalikan kernel UML, bukan kernel Android.
-3. **`podnext docker` passthrough** — hanya di backend UML.
-   Gerbang: `podnext docker run --rm hello-world` berhasil lewat PDN.
-4. **`build` sungguhan** — `docker build` di guest, `docker save` → `ImageManager::push`.
-   Gerbang: image hasil build bisa `podnext install` dan `login`.
-5. **`network`/`volume`/`quota`** dipetakan ke Docker asli saat backend = UML.
-
-Setiap langkah punya gerbang yang bisa dijalankan, dan langkah 1 tidak mengubah perilaku
-apa pun — jadi risikonya terkendali.
+1. **`RuntimeBackend` + `ProotBackend`**: Pure refactoring; all 128 tests pass with unchanged CLI semantics.
+2. **Minimal `UmlBackend`**: Implements `protocol` + `status` + `exec`; verifies `uname -a` returns the UML kernel.
+3. **`podnext docker` Passthrough**: Enabled exclusively on the UML backend (`podnext docker run --rm hello-world`).
+4. **Production `build`**: Executes `docker build` inside UML guest and exports real OCI layers.
+5. **Mapping Subsystems**: Bridges `network`, `volume`, and `quota` to native Docker resources when `backend = UML`.

@@ -5,279 +5,282 @@
 [![CI/CD](https://img.shields.io/badge/CI%2FCD-100%25%20passing-brightgreen.svg)](https://github.com/michaelamoetoevsky/PDN/actions)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Linux%20aarch64%20%2F%20x86__64-blue.svg)](https://termux.dev)
 
-PRoot Distro Next (PDN / `podnext`) adalah platform manajemen container dan orkestrasi layanan generasi baru yang dirancang khusus untuk Termux di Android 16+ serta lingkungan Linux rootless.
+PRoot Distro Next (PDN / `podnext`) is a next-generation container management and service orchestration platform engineered specifically for Termux on Android 16+ and unprivileged rootless Linux environments.
 
-Dibangun seluruhnya dalam bahasa Rust, PDN menyatukan ekosistem PRoot (C), PRoot-distro (Bash script), dan lapisan kompatibilitas Android modern ke dalam satu platform terpadu, aman dari kebocoran environment, dan berkecepatan tinggi.
+Built entirely in Rust, PDN unifies the PRoot (C) ecosystem, the `proot-distro` framework, and modern Android runtime compatibility shims into a single high-performance, memory-safe, and leak-proof platform.
 
 ---
 
-## 1. Perbandingan: PodNext vs PRoot-Distro Termux
+## 1. Feature Comparison: PodNext vs PRoot-Distro
 
-| Fitur / Parameter | `proot-distro` (Termux Bawaan) | `podnext` (PRoot Distro Next) | Keuntungan PDN |
+| Feature / Metric | `proot-distro` (Termux Default) | `podnext` (PRoot Distro Next) | PDN Advantage |
 |---|---|---|---|
-| **Bahasa & Eksekusi** | Skrip Bash berlapis-lapis | Native Rust (single binary terkompilasi) | Zero bash-overhead, memori aman |
-| **Kecepatan Cold-Start Login** | ~0.603 detik | **~0.097 detik** | **~5× lebih cepat** |
-| **Kecepatan Daftar Container** | ~0.160 detik | **~0.008 detik** | **~20× lebih cepat** |
-| **Isolasi Environment** | Bocor 24 s/d 163 env var host (PATH, ANDROID_ROOT, dll) | **Tersanitasi ketat (hanya 6 env var bersih)** | Container murni, tidak terkontaminasi Termux |
-| **Identitas Root Guest** | Emulasi permisif sederhana | Emulasi `--change-id=0:0` murni | `apt`, `dpkg`, paket Linux berjalan lancar |
-| **Shared Memory (`/dev/shm`)** | Sering menimpa host atau tidak mandiri | **/dev/shm terisolasi mandiri (mode 1777)** | **Chromium headless & Playwright berjalan mulus** |
-| **Propagasi Exit Code** | Rentan terpotong atau collapse ke 1 | **Propagasi kode keluar anak akurat (ChildExit)** | Skrip automasi/CI menerima exit code asli |
-| **Keamanan Pertukaran Berkas** | Standar tar pipe | **Pemeriksaan traversal ketat (tolak `..`)** | Menolak eksploitasi traversal ke rootfs host |
-| **Sinkronisasi Berkas** | Tidak ada sinkronisasi sha256 bawaan | **`sync` dengan content sha256 & `--delete`** | Hemat I/O, hanya mentransfer delta perubahan |
-| **Supervisi Layanan** | Tidak ada (skrip mati saat shell ditutup) | **Service supervisor, restart policy, watchdog** | Layanan tetap hidup di latar belakang |
-| **Kontrol Sumber Daya** | Tidak ada | **Kuota cgroups memory & CPU** | Mencegah crash OOM pada perangkat mobile |
-| **Integrasi Sistem Android** | Manual | **Termux:Boot autostart, WakeLock manager** | Layanan tetap berjalan saat layar mati |
-| **IPC & Otomasi** | Tidak ada | **Broker D-Bus IPC & Manifes Deklaratif GitOps** | Standar industri enterprise di Android |
-| **Dukungan Docker Kernel** | Mustahil (seccomp SIGSYS pada `mount(2)`) | **Arsitektur `RuntimeBackend` siap bridging UML** | Jalur jelas menuju Docker via UML VM |
+| **Language & Execution** | Multi-layer Bash / Python script | Native compiled Rust binary | Zero scripting overhead, memory safety |
+| **Login Cold-Start Latency** | ~0.603 s | **~0.097 s** | **~5× faster execution** |
+| **Container Listing Latency** | ~0.160 s | **~0.008 s** | **~20× faster execution** |
+| **Environment Isolation** | Leaks 24 to 163 host env vars (PATH, ANDROID_ROOT, etc.) | **Strictly sanitized (6 essential clean vars)** | Pure container isolation, no host pollution |
+| **Guest Root Identity** | Basic permissive emulation | Native `--change-id=0:0` emulation | Flawless `apt`, `dpkg`, and Linux package manager operations |
+| **Shared Memory (`/dev/shm`)** | Overwrites host or unmanaged | **Isolated standalone POSIX shared memory (`1777`)** | **Chromium headless & Playwright DOM dump run out of the box** |
+| **Exit Code Propagation** | Prone to truncation or collapsing to 1 | **Accurate child process exit code forwarding (`ChildExit`)** | CI/CD pipelines & automation scripts receive real exit codes |
+| **File Transfer Security** | Standard tar pipe | **Strict path traversal enforcement (rejects `..`)** | Rejects directory traversal exploits into host rootfs |
+| **Filesystem Synchronization** | No built-in hash-based sync | **`sync` with SHA-256 content hashes & `--delete`** | I/O-efficient delta-only directory transfers |
+| **Service Supervision** | None (processes die when shell exits) | **Process supervisor, restart policies, watchdog** | Long-running background daemon services |
+| **Resource Governance** | None | **cgroups v2 memory & CPU quota controllers** | Prevents mobile device OOM freezes |
+| **Android Integration** | Manual | **Termux:Boot autostart, WakeLock engine** | Services survive device sleep states |
+| **IPC & Automation** | None | **Standalone D-Bus broker & declarative GitOps manifests** | Production-grade automation on Android |
+| **Kernel Docker Support** | Blocked (seccomp SIGSYS on `mount(2)`) | **Polymorphic `RuntimeBackend` architecture (UML bridge)** | Direct path to full Docker via User-Mode Linux VM |
 
 ---
 
-## 2. Struktur Penggunaan: Dari Sederhana ke Lanjut
+## 2. Usage Tiers: From Core Distro to Advanced Orchestration
 
-Penggunaan `podnext` telah dirapikan dan dibagi ke dalam 3 tingkatan yang jelas:
+The command hierarchy in `podnext` is partitioned into three distinct tiers:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│  LEVEL 1: SIMPLE & CORE DISTRO (Pengganti proot-distro sehari-hari)   │
+│  TIER 1: SIMPLE & CORE DISTRO (Everyday proot-distro drop-in)          │
 │  install · login · run · list · copy · sync · rename · reset · remove  │
 ├────────────────────────────────────────────────────────────────────────┤
-│  LEVEL 2: INTERMEDIATE (Multi-Container, Image OCI, Volume & Backup)  │
+│  TIER 2: INTERMEDIATE (Multi-Container, OCI Images, Volumes & Backups) │
 │  image · volume · network · backup · ps · sessions · attach · kill    │
 ├────────────────────────────────────────────────────────────────────────┤
-│  LEVEL 3: ADVANCED (Service Supervisor, Watchdog, Quota, D-Bus, GitOps)│
+│  TIER 3: ADVANCED (Service Supervisor, Watchdog, Quota, D-Bus, GitOps) │
 │  service · daemon · watchdog · quota · log · dbus · gitops · boot      │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### Level 1: Penggunaan Sederhana & Sehari-hari (Core Distro)
+### Tier 1: Core Distro Usage (Drop-in Replacement)
 
-Bagi pengguna yang ingin memakai PDN layaknya `proot-distro`, perintahnya sangat sederhana dan langsung:
+For everyday development environments, commands are intuitive and straightforward:
 
-#### 1. Mencari dan Memasang Distro
+#### 1. Search and Install Distributions
 ```bash
-# Cari distro di registry OCI / Docker Hub
-podnext search debian
+# View curated official distributions
+podnext search
 
-# Pasang Debian 13 (Trixie)
+# Search Docker Hub / OCI registries
+podnext search debian --limit 5
+
+# Install Debian 13 (Trixie)
 podnext install debian:13
 
-# Pasang Ubuntu dengan nama kustom
+# Install Ubuntu with a custom container name
 podnext install ubuntu:22.04 --name my-ubuntu
 ```
 
-#### 2. Masuk Shell Interaktif atau Menjalankan Perintah
+#### 2. Interactive Shell & Ad-hoc Execution
 ```bash
-# Masuk ke dalam shell container sebagai root
+# Enter interactive root shell
 podnext login debian
 
-# Jalankan perintah langsung dari host tanpa masuk shell
+# Run commands directly from the host without spawning an interactive shell
 podnext run debian -- apt update && apt install -y curl git
 ```
 
-#### 3. Melihat Daftar dan Status Container
+#### 3. Inspect Container Status & OS Version
 ```bash
-# Tampilkan daftar container terpasang
+# Display installed containers with genuine detected distro names and versions
 podnext list
 ```
 
-#### 4. Pertukaran Berkas Cepat (Copy & Sync)
+#### 4. Fast & Secure File Exchange (Copy & Sync)
 ```bash
-# Salin berkas dari container ke host (aman dari path traversal)
+# Copy files from container to host (traversal-safe)
 podnext copy debian:/etc/hosts ./hosts.bak
 
-# Salin folder dari host ke dalam container secara rekursif
+# Recursively copy directory from host into container
 podnext copy ./my-project debian:/root/my-project -R
 
-# Sinkronisasi folder (hanya transfer berkas yang berubah berdasarkan sha256)
+# Sync directory using SHA-256 delta hashes with deletion propagation
 podnext sync ./my-project debian:/root/my-project --delete
 ```
 
-#### 5. Mengganti Nama, Reset, atau Menghapus Container
+#### 5. Rename, Reset, or Remove Containers
 ```bash
-# Ganti nama container terpasang
+# Rename an installed container
 podnext rename debian deb-prod
 
-# Reset container ke instalasi bersih semula (mengunduh ulang layer awal)
+# Reset container back to its original clean OCI state
 podnext reset deb-prod
 
-# Hapus container beserta seluruh datanya
+# Remove container and permanently clean up storage
 podnext remove deb-prod --force
 ```
 
 ---
 
-### Level 2: Penggunaan Menengah (Multi-Container, Storage & Backup)
+### Tier 2: Intermediate Storage & Backup (Multi-Container)
 
-Untuk manajemen container yang lebih fleksibel, snapshot cadangan, dan volume persisten:
+For advanced storage management, backup snapshots, and multi-container environments:
 
-#### 1. Manajemen Image OCI Lokal
+#### 1. Local OCI Image Cache Management
 ```bash
-# Lihat image yang tersimpan di cache lokal
+# List locally cached OCI images
 podnext image ls
 
-# Unduh image Alpine terbaru
+# Pull an image without immediately spinning up a container
 podnext image pull alpine:latest
 ```
 
-#### 2. Volume Penyimpanan Persisten
+#### 2. Persistent Storage Volumes
 ```bash
-# Buat volume data
+# Create a named persistent volume
 podnext volume create postgres-data
 
-# Tampilkan daftar volume
+# List existing volumes
 podnext volume ls
 
-# Bersihkan volume yang tidak terikat
+# Prune unused dangling volumes
 podnext volume prune
 ```
 
-#### 3. Jaringan Bridge Terisolasi
+#### 3. Isolated Bridge Networks
 ```bash
-# Buat network bridge terisolasi
+# Create an isolated bridge network
 podnext network create internal-net
 
-# Tampilkan jaringan aktif
+# List active container networks
 podnext network ls
 ```
 
-#### 4. Snapshot Backup dan Restore
+#### 4. Backup Snapshots & Restoration
 ```bash
-# Buat arsip snapshot penuh container ke tarball terkompresi
+# Create a full compressed snapshot archive of a container
 podnext backup create deb-prod
 
-# Tampilkan riwayat backup yang tersedia
+# View available snapshot archives
 podnext backup list
 
-# Pulihkan snapshot ke container baru
+# Restore a snapshot to a new container
 podnext backup restore <backup-id> --target deb-restored
 ```
 
 ---
 
-### Level 3: Penggunaan Tingkat Lanjut (Layanan Sistem, Daemon & IPC)
+### Tier 3: Advanced Systems (Supervision, Daemons & IPC)
 
-Untuk menjalankan layanan latar belakang (background services), otomatisasi saat booting Termux, kontrol kuota memori/CPU, dan GitOps:
+For production services, mobile boot persistence, resource limits, and GitOps workflows:
 
-#### 1. Daemon Supervisor PDN
+#### 1. Background Supervisor Daemon
 ```bash
-# Jalankan background daemon supervisor
+# Start background supervisor daemon
 podnext daemon start
 
-# Periksa status daemon
+# Check supervisor daemon status
 podnext daemon status
 ```
 
-#### 2. Pengelolaan Layanan (Service Management)
+#### 2. Managed Services & Lifecycle
 ```bash
-# Jalankan managed service dengan restart policy otomatis
+# Start a supervised background service with automatic restart policy
 podnext service start web-server
 
-# Pantau status service dan PID proses
+# Inspect service state and process PID
 podnext service status web-server
 
-# Lihat log keluaran service
+# View live service logs
 podnext service logs web-server
 ```
 
-#### 3. Kuota Sumber Daya (Resource Quotas)
+#### 3. Resource Quotas (cgroups v2)
 ```bash
-# Batasi memori maksimal container ke 512MB
+# Limit maximum memory usage to 512MB
 podnext quota set web-server memory 512M
 
-# Batasi penggunaan CPU maksimal (2 core = 200%)
+# Restrict CPU utilization (2 cores = 200%)
 podnext quota set web-server cpu 200
 
-# Pantau pemakaian CPU & RAM real-time
+# Monitor real-time CPU and RAM utilization
 podnext quota usage web-server
 ```
 
-#### 4. Watchdog & Circuit Breaker
+#### 4. Watchdog & Circuit Breakers
 ```bash
-# Atur kebijakan restart jika service gagal: maksimal 3 kali dalam 60 detik
+# Configure automatic restart policy: up to 3 retries within 60 seconds
 podnext watchdog policy set web-server OnFailure 3 60
 
-# Periksa status circuit breaker
+# Inspect circuit breaker status
 podnext watchdog status
 ```
 
-#### 5. IPC D-Bus & Integrasi GitOps
+#### 5. D-Bus IPC Broker & Declarative GitOps
 ```bash
-# Jalankan D-Bus broker mandiri pada UNIX socket
+# Run standalone D-Bus broker on a UNIX domain socket
 podnext dbus serve --socket $TMPDIR/pdn-dbus.sock
 
-# Panggil method service via D-Bus
+# Call service methods over D-Bus
 podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service.List --socket $TMPDIR/pdn-dbus.sock
 
-# Sinkronkan manifest deklaratif aplikasi (Container & Volume) via GitOps
+# Synchronize declarative container & volume manifests via GitOps
 podnext gitops sync --repo ./manifests
 
-# Cek status drift aplikasi deklaratif
+# Detect configuration drift
 podnext gitops drift
 ```
 
-#### 6. Menjaga Container Tetap Aktif di Android
+#### 6. Android Keep-Alive & WakeLock
 ```bash
-# Ambil Android Wake Lock agar container tidak mati saat layar mati
+# Acquire Android Partial WakeLock to prevent container suspension during screen-off
 podnext wakelock acquire web-server Partial
 
-# Pasang auto-start saat Termux booting (memerlukan Termux:Boot)
+# Enable boot autostart via Termux:Boot
 podnext boot enable web-server
 ```
 
 ---
 
-## 3. Kompatibilitas Khusus: Browser & Playwright
+## 3. Browser & Automation Compatibility: Playwright on Android
 
-PDN telah divalidasi mampu menjalankan browser modern di dalam container rootless berkat konfigurasi mandiri `/dev/shm` (POSIX shared memory mode `1777`):
+PDN has been verified to execute modern headless web browsers inside unprivileged rootless containers due to standalone `/dev/shm` provisioning (POSIX shared memory mode `1777`):
 
 ```bash
-# Di dalam container debian PDN:
+# Inside a PDN Debian container:
 apt update && apt install -y chromium chromium-sandbox
 chromium --headless=new --no-sandbox --disable-gpu --dump-dom "https://example.com"
 ```
-*Hasil: DOM HTML ter-dumping sempurna tanpa error shared memory (`EACCES`/`ENOSPC`).*
+*Result: Clean HTML DOM extraction without shared memory denial errors (`EACCES` / `ENOSPC`).*
 
 ---
 
-## 4. Status Verifikasi & CI/CD Pipeline
+## 4. Verification Status & CI/CD Pipeline
 
-Pipeline pengujian GitHub Actions berada dalam status **100% HIJAU (Passing)**:
+The GitHub Actions automated verification matrix is **100% Passing (Green)**:
 
-| Workflow | Jobs & Matrix | Status |
+| Workflow | Scope & Test Matrix | Status |
 |---|---|---|
-| **PDN CI/CD** | Host Build, Integration Test (133 passed), Cross-Compile aarch64, Fuzzing, Docs, Security Audit | **SUCCESS** |
-| **Android Cross-Compile** | Matrix: `aarch64-linux-android` & `x86_64-linux-android`, NDK `r27c` & `r30` | **SUCCESS** |
-| **Benchmark Suite** | Performance & latency benchmark | **SUCCESS** |
+| **PDN CI/CD** | Host Build, Integration Test Suite (133 tests passed), Cross-Compile aarch64, Fuzzing, Docs mdBook, Security Audit | **SUCCESS** |
+| **Android Cross-Compile** | Matrix: `aarch64-linux-android` & `x86_64-linux-android` with NDK `r27c` & `r30` | **SUCCESS** |
+| **Benchmark Suite** | Performance & latency regression benchmarks | **SUCCESS** |
 
 ---
 
-## 5. Arsitektur Crates
+## 5. Crates Architecture
 
-PDN dipecah secara modular menjadi 6 crates Rust:
+PDN is organized into 6 modular Rust crates:
 
-| Crate | Peran / Tanggung Jawab |
+| Crate | Responsibility |
 |---|---|
-| `proot-core` | Inti PRoot: ptrace interception, penerjemahan syscall, VFS, path resolution, seccomp BPF. |
-| `proot-distro-core` | Manajemen container, tar layer unpacking (SELinux-safe hardlinks), verifikasi integritas digest OCI, `/dev/shm` store, OCI manifest handling. |
-| `proot-compat` | Lapisan kompatibilitas Android: shim personality, mount helper, translasi cgroup v2, stub sysfs. |
-| `pn-gateway` | Fail-safe manager, guardrails batas container, health checker, Prometheus metrics. |
-| `pn-next` | Runtime tingkat lanjut: scheduler, network bridge, volume drivers, D-Bus broker, supervisor service, GitOps engine. |
-| `podnext` | CLI frontend terpadu dan biner supervisor daemon (`podnext`, `podnext-daemon`). |
+| `proot-core` | Core PRoot engine: ptrace syscall tracing, VFS routing, path resolution, seccomp BPF filters. |
+| `proot-distro-core` | Container lifecycle, SELinux-safe layer unpacking, OCI digest verification, `/dev/shm` management, OCI manifest handling. |
+| `proot-compat` | Android compatibility layer: platform personality shims, mount helpers, cgroup v2 shims, sysfs stubs. |
+| `pn-gateway` | Fail-safe supervisor, container guardrails, health monitors, Prometheus metrics. |
+| `pn-next` | Advanced runtime orchestration: scheduler, bridge networking, volume drivers, D-Bus broker, supervisor service, GitOps engine. |
+| `podnext` | Unified CLI frontend and supervisor daemon binaries (`podnext`, `podnext-daemon`). |
 
 ---
 
-## 6. Dokumentasi Lanjutan
+## 6. References & Further Reading
 
-- [Panduan Migrasi dari proot-distro](docs/src/migration-guide.md)
-- [Referensi Lengkap CLI Command](docs/src/cli-reference.md)
-- [Analisa Arsitektur & Roadmap Pengembangan PDN](docs/ARCHITECTURAL_ANALYSIS_AND_ROADMAP.md)
-- [Riset & Pengujian Kapabilitas Internal](research/INTERNAL_CAPABILITY_TESTS_RUN2.md)
-- [Blueprint Integrasi Docker Runtime via UML](research/DOCKER_RUNTIME_INTEGRATION_PLAN.md)
+- [Migration Guide from proot-distro](docs/src/migration-guide.md)
+- [Complete CLI Reference](docs/src/cli-reference.md)
+- [Architectural Analysis & Roadmap](docs/ARCHITECTURAL_ANALYSIS_AND_ROADMAP.md)
+- [Internal Capabilities & Testing Suite](research/INTERNAL_CAPABILITY_TESTS_RUN2.md)
+- [Docker Runtime Integration Blueprint via UML](research/DOCKER_RUNTIME_INTEGRATION_PLAN.md)
 
 ---
 
-## Lisensi
+## License
 
 GPL-2.0-or-later.
