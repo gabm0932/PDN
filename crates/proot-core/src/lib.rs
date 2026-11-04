@@ -302,6 +302,9 @@ impl ProotEngine {
             pn_trace!("[DEBUG] Env: {:?}", self.config.env);
         }
 
+        // Own process group: proot traces the guest's descendants, so a stop
+        // must be able to signal the whole tree, not one pid. pgid == child pid.
+        cmd.process_group(0);
         // Spawn the process (daemon mode)
         let child = cmd.spawn()?;
         let pid = child
@@ -435,6 +438,8 @@ impl ProotEngine {
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
             .stdin(std::process::Stdio::inherit())
+            // Own process group (pgid == this pid) so callers can group-signal.
+            .process_group(0)
             .spawn()?;
         let pid = child
             .id()

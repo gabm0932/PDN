@@ -27,6 +27,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tar::Archive;
+use tokio::signal::unix::{signal, SignalKind};
 use urlencoding::encode;
 
 // ===== Docker Hub Search =====
@@ -524,6 +525,55 @@ pub async fn login_container_native(
     Ok(())
 }
 
+/// PID of this process's only direct child during a foreground run — the proot
+/// process the runtime spawned. proot-core keeps the child pid private, so the
+/// run path has to discover it from `/proc` (matching `PPid`). Returns `None`
+/// when no child is currently visible.
+fn direct_child_pid() -> Option<i32> {
+    let me = std::process::id() as i32;
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
+        // `comm` (field 2) is parenthesised and may contain spaces/parens, so
+        // the remaining fields only start reliably after the last ')'.
+        let Some(rest) = stat.rfind(')').map(|i| &stat[i + 1..]) else {
+            continue;
+        };
+        let mut fields = rest.split_whitespace();
+        let _state = fields.next();
+        if fields.next().and_then(|s| s.parse::<i32>().ok()) == Some(me) {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+/// Forward `sig` to the running guest.
+///
+/// Sent to the child's *process group* so the whole traced tree is signalled at
+/// once. The runtime is being given `process_group(0)` on spawn (seat
+/// kill_correct); until that lands the child is not a group leader, `kill(-pid)`
+/// returns ESRCH, and this falls back to signalling the child pid directly —
+/// proot's own `--kill-on-exit` then tears down its tracees.
+fn forward_to_guest(sig: i32) {
+    let Some(pid) = direct_child_pid() else {
+        return;
+    };
+    unsafe {
+        if libc::kill(-pid, sig) != 0 {
+            libc::kill(pid, sig);
+        }
+    }
+}
+
 pub async fn run_container_native(
     container_name: &str,
     command: Vec<String>,
@@ -535,7 +585,47 @@ pub async fn run_container_native(
         container.config.isolated = true;
     }
     let backend = container_mgr.get_backend(&container);
-    let exit_code = backend.execute(&container, command).await?;
+
+    // A foreground run must survive a SIGTERM/SIGINT long enough to kill the
+    // guest. Without these handlers the default action terminated podnext
+    // immediately and orphaned the proot process (and everything it traced).
+    // `signal()`'s handler registration is dropped when this fn returns.
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
+
+    let exec = backend.execute(&container, command);
+    tokio::pin!(exec);
+
+    let mut forwarded: Option<i32> = None;
+    let result = loop {
+        tokio::select! {
+            res = &mut exec => break res,
+            _ = sigterm.recv() => {
+                forwarded = Some(libc::SIGTERM);
+                forward_to_guest(libc::SIGTERM);
+            }
+            _ = sigint.recv() => {
+                forwarded = Some(libc::SIGINT);
+                forward_to_guest(libc::SIGINT);
+            }
+        }
+    };
+
+    // The runtime registered a session record for this pid and it is now spent;
+    // remove it so `podnext ps`/sessions do not accumulate a stale entry. Runs
+    // on normal, signalled and error exits alike.
+    let _ = std::fs::remove_file(proot_distro_core::session::session_file_path(
+        std::process::id(),
+    ));
+
+    let exit_code = result?;
+    // A guest killed by signal N surfaces as 128+N (the shell convention), not
+    // the -1/255 the runtime reports for a signal-terminated child.
+    if let Some(sig) = forwarded {
+        if exit_code != 0 {
+            return Err(anyhow::Error::new(proot_core::ChildExit(128 + sig)));
+        }
+    }
     if exit_code != 0 {
         return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
     }
@@ -593,4 +683,57 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
 
     println!("Container '{}' removed.", name);
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod signal_tests {
+    use super::*;
+    use std::os::unix::process::CommandExt;
+
+    /// Poll `f` until it is true or `deadline` passes; returns whether it became
+    /// true. Asserts on the observable state change, not on a fixed sleep.
+    fn eventually(deadline: std::time::Duration, mut f: impl FnMut() -> bool) -> bool {
+        let end = std::time::Instant::now() + deadline;
+        loop {
+            if f() {
+                return true;
+            }
+            if std::time::Instant::now() >= end {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// The run path discovers the proot child from /proc and signals it; the
+    /// guest must actually die. The child is spawned with `process_group(0)`,
+    /// the same way proot-core will.
+    #[test]
+    fn forward_to_guest_terminates_child_group() {
+        let mut child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("sleep 60")
+            .process_group(0)
+            .spawn()
+            .expect("spawn child");
+        let pid = child.id() as i32;
+
+        // Observable: the child becomes visible to the run path's discovery.
+        assert!(
+            eventually(std::time::Duration::from_secs(5), || direct_child_pid()
+                == Some(pid)),
+            "child pid {pid} never showed up as this process's direct child"
+        );
+
+        forward_to_guest(libc::SIGTERM);
+
+        // Observable: the child is reaped (gone), not a time elapsed.
+        assert!(
+            eventually(std::time::Duration::from_secs(5), || child
+                .try_wait()
+                .expect("try_wait")
+                .is_some()),
+            "child survived SIGTERM forwarded to its process group"
+        );
+    }
 }

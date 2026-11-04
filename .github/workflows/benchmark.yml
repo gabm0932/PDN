@@ -110,7 +110,11 @@ jobs:
           # hardcode a default branch name that may not exist (repo default: master).
           BASEREF="${{ github.base_ref }}"
           git fetch origin "$BASEREF:$BASEREF"
-          git stash
+          # No stash dance. A CI checkout has no local changes to preserve, and the
+          # stash/pop pair is actively harmful here: `git stash` finds nothing to save and
+          # `git stash pop` then exits 1, which aborts the step (observed: "No stash entries
+          # found." + "##[error]Process completed with exit code 128") AFTER the benchmarks ran.
+          # This step only runs on pull_request, so master stayed green while every PR died here.
           git checkout "$BASEREF"
           # Same bounding as the step above, and for the same reason: this runs the
           # suite a second time, against the base branch. Left unbounded it is the
@@ -120,7 +124,6 @@ jobs:
             --warm-up-time 1 --measurement-time 3 --sample-size 10 2>&1 \
             | tee benchmark-baseline.txt
           git checkout -
-          git stash pop
 
           # Compare results (simplified - in practice use criterion's comparison)
           echo "::notice::Benchmark comparison completed. Check artifacts for details."

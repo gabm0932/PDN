@@ -462,6 +462,38 @@ fn default_max_log_files() -> u32 {
     5
 }
 
+/// Rotated log path for `idx` (`svc.log` -> `svc.log.1`).
+fn rotated_log_path(path: &Path, idx: u32) -> PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(format!(".{}", idx));
+    PathBuf::from(s)
+}
+
+/// Size-triggered rotation honouring `LogRotationConfig`, applied at service
+/// start. Previously `stdio.rotation` was parsed but never acted on, so
+/// `stdout`/`stderr` files grew without bound.
+/// ponytail: open-time only — a single long-lived process can still grow its
+/// current file past `max_size` between restarts; add a stdout pump if that
+/// matters.
+fn rotate_log_if_needed(path: &Path, cfg: &LogRotationConfig) -> std::io::Result<()> {
+    let len = match fs::metadata(path) {
+        Ok(m) => m.len(),
+        Err(_) => return Ok(()), // no file yet
+    };
+    if cfg.max_files == 0 || len < cfg.max_size {
+        return Ok(());
+    }
+    // Shift `path.N-1` -> `path.N`, dropping the oldest.
+    for i in (1..cfg.max_files).rev() {
+        let from = rotated_log_path(path, i);
+        if from.exists() {
+            let _ = fs::rename(&from, rotated_log_path(path, i + 1));
+        }
+    }
+    let _ = fs::rename(path, rotated_log_path(path, 1));
+    Ok(())
+}
+
 /// Socket activation configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketConfig {
@@ -1596,6 +1628,9 @@ impl ServiceSupervisor {
 
         // Set up stdio
         if let Some(stdout_path) = &config.stdio.stdout {
+            if let Some(rot) = &config.stdio.rotation {
+                let _ = rotate_log_if_needed(stdout_path, rot);
+            }
             let stdout_file = fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -1606,6 +1641,9 @@ impl ServiceSupervisor {
         }
 
         if let Some(stderr_path) = &config.stdio.stderr {
+            if let Some(rot) = &config.stdio.rotation {
+                let _ = rotate_log_if_needed(stderr_path, rot);
+            }
             let stderr_file = fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -2361,6 +2399,40 @@ mod tests {
         assert_eq!(config.process.command, vec!["/bin/sleep", "100"]);
         assert_eq!(config.restart.condition, RestartCondition::OnFailure);
         assert!(config.health.enabled);
+    }
+
+    #[test]
+    fn test_log_rotation_caps_file_count() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("svc.log");
+        let cfg = LogRotationConfig {
+            max_size: 16,
+            max_files: 3,
+            compress: false,
+        };
+
+        // Each round fills the base file past max_size; rotation must fire.
+        for _ in 0..10 {
+            fs::write(&path, vec![b'x'; 32]).unwrap();
+            rotate_log_if_needed(&path, &cfg).unwrap();
+        }
+
+        // The full file was rotated out of the base path...
+        assert!(!path.exists(), "full log rotated out of the base path");
+        // ...and at most `max_files` rotated copies exist.
+        let kept = (1..=cfg.max_files + 4)
+            .map(|i| rotated_log_path(&path, i))
+            .filter(|p| p.exists())
+            .count();
+        assert!(
+            kept <= cfg.max_files as usize,
+            "rotated files {kept} exceed max_files {}",
+            cfg.max_files
+        );
+        assert!(
+            rotated_log_path(&path, 1).exists(),
+            "newest rotated file exists"
+        );
     }
 }
 

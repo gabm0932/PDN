@@ -2,18 +2,29 @@
 //!
 //! Tests for service supervisor lifecycle, persistence, restart policies,
 //! and circuit breaker functionality.
+//!
+//! Restart-policy tests observe an actual state transition instead of sleeping
+//! a fixed offset and hoping the supervisor got there in time. A fixed
+//! `sleep(3s); assert_eq!(state, expected)` is a race: it samples the supervisor
+//! at an arbitrary instant and passes or fails by scheduling. Waiting for the
+//! transition, with a deadline an order of magnitude larger than any delay used
+//! here, turns that race into a slow test at worst — never a red one.
 
 use anyhow::Result;
 use pn_next::{
     CircuitBreaker, ProcessConfig, ResourceLimits, RestartCondition, RestartPolicy, ServiceConfig,
-    ServiceMeta, ServiceState, ServiceSupervisor, ServiceType, StdioConfig, SupervisorBuilder,
-    SupervisorConfig, SupervisorHealthCheckConfig, SupervisorState,
+    ServiceMeta, ServiceState, ServiceStatus, ServiceSupervisor, ServiceType, StdioConfig,
+    SupervisorBuilder, SupervisorEvent, SupervisorHealthCheckConfig, SupervisorState,
 };
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::tempdir;
-use tokio::time::sleep;
+use tokio::time::Instant;
+
+/// Generous deadline: ≥10x the largest delay any test here configures.
+const DEADLINE: Duration = Duration::from_secs(30);
+/// Poll cadence, small relative to every delay/supervision interval in play.
+const POLL: Duration = Duration::from_millis(25);
 
 fn create_test_supervisor() -> Result<(ServiceSupervisor, tempfile::TempDir)> {
     let temp_dir = tempdir()?;
@@ -65,6 +76,51 @@ fn create_test_service_config(name: &str) -> ServiceConfig {
     }
 }
 
+/// Wait for an observable transition instead of sleeping a fixed duration.
+///
+/// Returns the first status that satisfies `pred`, panicking (i.e. failing the
+/// test) with the last observed status if that transition never happens before
+/// `deadline`. The assertion that follows re-checks the same predicate, so the
+/// wait can never turn a red test green: if the supervisor transitions to
+/// something else, or to nothing at all, the test fails and prints exactly what
+/// it saw.
+async fn wait_status<F>(
+    supervisor: &ServiceSupervisor,
+    name: &str,
+    what: &str,
+    deadline: Duration,
+    mut pred: F,
+) -> ServiceStatus
+where
+    F: FnMut(&ServiceStatus) -> bool,
+{
+    let start = Instant::now();
+    let mut last = supervisor
+        .get_status(name)
+        .await
+        .expect("get_status for a created service");
+    while !pred(&last) {
+        if start.elapsed() >= deadline {
+            panic!(
+                "timed out after {:?} waiting for {what} on '{name}'; last observed \
+                 state={:?} total_restarts={} restart_count={} pid={:?} exit_code={:?}",
+                deadline,
+                last.state,
+                last.total_restarts,
+                last.restart_count,
+                last.pid,
+                last.exit_code
+            );
+        }
+        tokio::time::sleep(POLL).await;
+        last = supervisor
+            .get_status(name)
+            .await
+            .expect("get_status for a created service");
+    }
+    last
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_supervisor_creation_and_initialization() -> Result<()> {
     let (mut supervisor, _temp_dir) = create_test_supervisor()?;
@@ -114,10 +170,8 @@ async fn test_service_persistence_save_load() -> Result<()> {
 
     // Shutdown first supervisor
     tokio::time::timeout(Duration::from_secs(30), supervisor.shutdown()).await??;
-    // Give time for supervision loop to finish and ensure file is flushed
-    sleep(Duration::from_millis(500)).await;
-    // Sync filesystem
-    let _ = std::fs::File::open(&services_dir)?.sync_all();
+    // `create_service` wrote the file with `fs::write` (a synchronous, flushed
+    // write) before this point, so there is no window to wait out on disk.
 
     // Create second supervisor with same services dir
     let config2 = SupervisorBuilder::new()
@@ -215,10 +269,16 @@ async fn test_restart_policy_always() -> Result<()> {
     supervisor.create_service(config).await?;
 
     supervisor.start_service("restart-always").await?;
-    sleep(Duration::from_millis(3000)).await;
 
-    // Service should have been restarted
-    let status = supervisor.get_status("restart-always").await?;
+    // Always restarts on any exit: wait for the first restart decision.
+    let status = wait_status(
+        &supervisor,
+        "restart-always",
+        "restart scheduled (total_restarts > 0 or state == Restarting)",
+        DEADLINE,
+        |s| s.total_restarts > 0 || s.state == ServiceState::Restarting,
+    )
+    .await;
     assert!(status.total_restarts > 0 || status.state == ServiceState::Restarting);
 
     supervisor.shutdown().await?;
@@ -239,10 +299,16 @@ async fn test_restart_policy_on_failure() -> Result<()> {
     supervisor.create_service(config).await?;
 
     supervisor.start_service("restart-on-failure").await?;
-    sleep(Duration::from_millis(3000)).await;
 
-    // Service should have been restarted (non-zero exit)
-    let status = supervisor.get_status("restart-on-failure").await?;
+    // OnFailure restarts a non-zero exit: wait for the first restart.
+    let status = wait_status(
+        &supervisor,
+        "restart-on-failure",
+        "restart scheduled (total_restarts > 0 or state == Restarting)",
+        DEADLINE,
+        |s| s.total_restarts > 0 || s.state == ServiceState::Restarting,
+    )
+    .await;
     assert!(status.total_restarts > 0 || status.state == ServiceState::Restarting);
 
     supervisor.shutdown().await?;
@@ -260,12 +326,18 @@ async fn test_restart_policy_never() -> Result<()> {
     supervisor.create_service(config).await?;
 
     supervisor.start_service("restart-never").await?;
-    sleep(Duration::from_millis(3000)).await;
 
-    // Service should NOT have been restarted
-    let status = supervisor.get_status("restart-never").await?;
-    assert_eq!(status.total_restarts, 0);
+    // Never must reach the terminal Failed state and never restart.
+    let status = wait_status(
+        &supervisor,
+        "restart-never",
+        "terminal Failed state (Never must not restart)",
+        DEADLINE,
+        |s| s.state == ServiceState::Failed,
+    )
+    .await;
     assert_eq!(status.state, ServiceState::Failed);
+    assert_eq!(status.total_restarts, 0);
 
     supervisor.shutdown().await?;
     Ok(())
@@ -285,21 +357,48 @@ async fn test_restart_policy_unless_stopped() -> Result<()> {
     supervisor.create_service(config).await?;
 
     supervisor.start_service("restart-unless-stopped").await?;
-    sleep(Duration::from_millis(3000)).await;
 
-    // Service should have been restarted (not user stopped)
-    let status = supervisor.get_status("restart-unless-stopped").await?;
+    // (1) Not user-stopped: it must restart.
+    let status = wait_status(
+        &supervisor,
+        "restart-unless-stopped",
+        "restart scheduled (not user-stopped)",
+        DEADLINE,
+        |s| s.total_restarts > 0 || s.state == ServiceState::Restarting,
+    )
+    .await;
     assert!(status.total_restarts > 0 || status.state == ServiceState::Restarting);
 
-    // Now stop it explicitly
+    // (2) An explicit stop must reach Stopped — stop_service honors a user stop
+    // even while a restart backoff is in flight.
     supervisor
         .stop_service("restart-unless-stopped", false)
         .await?;
-    sleep(Duration::from_millis(3000)).await;
-
-    // Service should stay stopped (user_stopped = true)
-    let status = supervisor.get_status("restart-unless-stopped").await?;
+    let status = wait_status(
+        &supervisor,
+        "restart-unless-stopped",
+        "Stopped after explicit user stop",
+        DEADLINE,
+        |s| s.state == ServiceState::Stopped,
+    )
+    .await;
     assert_eq!(status.state, ServiceState::Stopped);
+
+    // (3) A user stop must not be undone. A *non-event* can only be observed
+    // over a window, so hold for longer than one supervision interval and fail
+    // if the service ever leaves Stopped.
+    let hold = Instant::now();
+    while hold.elapsed() < Duration::from_secs(3) {
+        let s = supervisor.get_status("restart-unless-stopped").await?;
+        assert_eq!(
+            s.state,
+            ServiceState::Stopped,
+            "user-stopped service must stay stopped, saw {:?} after {:?}",
+            s.state,
+            hold.elapsed()
+        );
+        tokio::time::sleep(POLL).await;
+    }
 
     supervisor.shutdown().await?;
     Ok(())
@@ -320,12 +419,16 @@ async fn test_circuit_breaker_opens_after_max_failures() -> Result<()> {
 
     supervisor.start_service("circuit-breaker").await?;
 
-    // Wait for multiple restart attempts
-    sleep(Duration::from_secs(5)).await;
-
-    // Circuit breaker should be open, service in Failed state
-    let status = supervisor.get_status("circuit-breaker").await?;
-    // After max_restarts exceeded, service should be Failed
+    // Once the restart budget/window is exhausted the service must settle in
+    // Failed rather than restarting forever.
+    let status = wait_status(
+        &supervisor,
+        "circuit-breaker",
+        "terminal Failed state after max failures",
+        DEADLINE,
+        |s| s.state == ServiceState::Failed,
+    )
+    .await;
     assert_eq!(status.state, ServiceState::Failed);
 
     supervisor.shutdown().await?;
@@ -381,10 +484,23 @@ async fn test_service_dependency_ordering() -> Result<()> {
 
     // Start B - should start A first
     supervisor.start_service("service-b").await?;
-    sleep(Duration::from_millis(200)).await;
 
-    let status_a = supervisor.get_status("service-a").await?;
-    let status_b = supervisor.get_status("service-b").await?;
+    let status_a = wait_status(
+        &supervisor,
+        "service-a",
+        "dependency A Running",
+        DEADLINE,
+        |s| s.state == ServiceState::Running,
+    )
+    .await;
+    let status_b = wait_status(
+        &supervisor,
+        "service-b",
+        "dependent B Running",
+        DEADLINE,
+        |s| s.state == ServiceState::Running,
+    )
+    .await;
 
     assert_eq!(status_a.state, ServiceState::Running);
     assert_eq!(status_b.state, ServiceState::Running);
@@ -405,7 +521,22 @@ async fn test_supervisor_shutdown_stops_all_services() -> Result<()> {
 
     supervisor.start_service("shutdown-1").await?;
     supervisor.start_service("shutdown-2").await?;
-    sleep(Duration::from_millis(200)).await;
+    wait_status(
+        &supervisor,
+        "shutdown-1",
+        "service 1 Running",
+        DEADLINE,
+        |s| s.state == ServiceState::Running,
+    )
+    .await;
+    wait_status(
+        &supervisor,
+        "shutdown-2",
+        "service 2 Running",
+        DEADLINE,
+        |s| s.state == ServiceState::Running,
+    )
+    .await;
 
     // Shutdown supervisor
     supervisor.shutdown().await?;
@@ -480,7 +611,6 @@ async fn test_enable_disable_service() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_restart_policy_on_abnormal() -> Result<()> {
-    eprintln!("DEBUG TEST: Starting test_restart_policy_on_abnormal");
     let temp_dir = tempfile::tempdir()?;
     let services_dir = temp_dir.path().join("services");
     let runtime_dir = temp_dir.path().join("runtime");
@@ -496,9 +626,7 @@ async fn test_restart_policy_on_abnormal() -> Result<()> {
         .build()?;
 
     let mut supervisor = config;
-    eprintln!("DEBUG TEST: Supervisor created, initializing...");
     supervisor.initialize().await?;
-    eprintln!("DEBUG TEST: Supervisor initialized");
 
     // Use a command that will be killed by signal (SIGKILL)
     let mut config = create_test_service_config("restart-abnormal");
@@ -511,32 +639,44 @@ async fn test_restart_policy_on_abnormal() -> Result<()> {
     supervisor.create_service(config).await?;
 
     supervisor.start_service("restart-abnormal").await?;
-    sleep(Duration::from_millis(1000)).await;
 
-    // Force kill (SIGKILL) - should restart
+    // Ensure a real process is up before the forced stop, so the abnormal exit
+    // really is a signal kill and not a racing start.
+    wait_status(
+        &supervisor,
+        "restart-abnormal",
+        "running process to force-kill",
+        DEADLINE,
+        |s| s.state == ServiceState::Running && s.pid.is_some(),
+    )
+    .await;
+
+    // Force kill (SIGKILL). OnAbnormal must treat this as an abnormal exit and
+    // schedule a restart: the service must not remain Stopped.
     supervisor.stop_service("restart-abnormal", true).await?;
-    sleep(Duration::from_millis(3000)).await;
-
-    let status = match supervisor.get_status("restart-abnormal").await {
-        Ok(s) => {
-            eprintln!(
-                "DEBUG TEST: status={:?}, total_restarts={}, state={:?}",
-                s, s.total_restarts, s.state
-            );
-            s
-        }
-        Err(e) => {
-            eprintln!("DEBUG TEST: get_status error: {:?}", e);
-            panic!("get_status failed: {:?}", e);
-        }
-    };
-    // With OnAbnormal, SIGKILL (exit code > 128 or negative) should restart
-    // But we stopped with force=true which sends SIGKILL, then stop_service marks as Stopped
-    // The restart logic is in check_service_health which checks exit_code
+    let status = wait_status(
+        &supervisor,
+        "restart-abnormal",
+        "OnAbnormal restart scheduled after forced (signal) stop",
+        DEADLINE,
+        |s| {
+            s.total_restarts > 0
+                || matches!(
+                    s.state,
+                    ServiceState::Restarting | ServiceState::Starting | ServiceState::Running
+                )
+        },
+    )
+    .await;
     assert!(
         status.total_restarts > 0
-            || status.state == ServiceState::Restarting
-            || status.state == ServiceState::Running
+            || matches!(
+                status.state,
+                ServiceState::Restarting | ServiceState::Starting | ServiceState::Running
+            ),
+        "OnAbnormal must schedule a restart after a forced stop; saw state={:?} total_restarts={}",
+        status.state,
+        status.total_restarts
     );
 
     supervisor.shutdown().await?;
@@ -557,10 +697,16 @@ async fn test_max_restarts_exceeded() -> Result<()> {
     supervisor.create_service(config).await?;
 
     supervisor.start_service("max-restarts").await?;
-    sleep(Duration::from_secs(6)).await;
 
-    // Should exceed max restarts and go to Failed state
-    let status = supervisor.get_status("max-restarts").await?;
+    // Budget exhausted -> terminal Failed state.
+    let status = wait_status(
+        &supervisor,
+        "max-restarts",
+        "terminal Failed state after max restarts",
+        DEADLINE,
+        |s| s.state == ServiceState::Failed,
+    )
+    .await;
     assert_eq!(status.state, ServiceState::Failed);
 
     supervisor.shutdown().await?;
@@ -584,7 +730,7 @@ async fn test_backoff_delay_increases() -> Result<()> {
 
     let start = std::time::Instant::now();
     supervisor.start_service("backoff-test").await?;
-    sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
     let elapsed = start.elapsed();
 
     // With backoff: 1s + 2s = 3s minimum for 2 restarts
@@ -612,18 +758,30 @@ async fn test_service_status_tracking() -> Result<()> {
 
     // Start
     supervisor.start_service("status-test").await?;
-    sleep(Duration::from_millis(3000)).await;
 
-    let status = supervisor.get_status("status-test").await?;
+    let status = wait_status(
+        &supervisor,
+        "status-test",
+        "Running after start",
+        DEADLINE,
+        |s| s.state == ServiceState::Running,
+    )
+    .await;
     assert_eq!(status.state, ServiceState::Running);
     assert!(status.pid.is_some());
     assert!(status.started_at.is_some());
 
     // Stop
     supervisor.stop_service("status-test", false).await?;
-    sleep(Duration::from_millis(3000)).await;
 
-    let status = supervisor.get_status("status-test").await?;
+    let status = wait_status(
+        &supervisor,
+        "status-test",
+        "Stopped after stop",
+        DEADLINE,
+        |s| s.state == ServiceState::Stopped,
+    )
+    .await;
     assert_eq!(status.state, ServiceState::Stopped);
     assert!(status.pid.is_none());
     // exit_code may be None if process was terminated by signal (SIGTERM)
