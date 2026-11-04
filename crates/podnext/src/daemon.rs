@@ -8,11 +8,17 @@ use pn_next::{ServiceSupervisor, SupervisorBuilder, SupervisorConfig, Supervisor
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::signal::unix::{signal, Signal, SignalKind};
 use tokio::sync::broadcast;
+use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
+
+/// Bounded grace period for in-flight connections after a shutdown signal.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 /// Daemon command protocol
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,6 +48,30 @@ enum DaemonResponse {
 struct DaemonState {
     supervisor: Arc<ServiceSupervisor>,
     event_sender: broadcast::Sender<SupervisorEvent>,
+}
+
+/// What to do when a signal arrives.
+#[derive(Debug, PartialEq, Eq)]
+enum SignalAction {
+    /// Stop the daemon (SIGTERM from a supervisor, SIGINT from Ctrl-C).
+    Shutdown,
+    /// Keep running (SIGHUP: reload is not implemented).
+    Ignore,
+}
+
+/// Map a received signal to an action.
+///
+/// SIGTERM and SIGINT are shutdown. SIGHUP conventionally means "reload your
+/// config", but there is no reload path here (a supervisor restart would need
+/// to rebuild the dependency graph); the safe choice is to ignore it rather
+/// than die, so a stray terminal-hangup or `kill -HUP` cannot take the daemon
+/// down silently.
+fn signal_action(kind: SignalKind) -> SignalAction {
+    if kind == SignalKind::terminate() || kind == SignalKind::interrupt() {
+        SignalAction::Shutdown
+    } else {
+        SignalAction::Ignore
+    }
 }
 
 #[derive(Parser)]
@@ -100,6 +130,40 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
+    // Install signal handlers before any async startup work: a supervisor that
+    // stops the daemon immediately after spawn sends SIGTERM while we are still
+    // initializing, and an unregistered SIGTERM would kill the process.
+    let mut sigterm = signal(SignalKind::terminate()).context("install SIGTERM handler")?;
+    let mut sigint = signal(SignalKind::interrupt()).context("install SIGINT handler")?;
+    let mut sighup = signal(SignalKind::hangup()).context("install SIGHUP handler")?;
+
+    let shutdown = async move {
+        loop {
+            let kind = tokio::select! {
+                _ = sigterm.recv() => SignalKind::terminate(),
+                _ = sigint.recv() => SignalKind::interrupt(),
+                _ = sighup.recv() => SignalKind::hangup(),
+            };
+            match signal_action(kind) {
+                SignalAction::Shutdown => {
+                    info!("Shutdown signal received ({:?})", kind);
+                    return;
+                }
+                SignalAction::Ignore => {
+                    info!("SIGHUP received; reload not implemented, ignoring");
+                }
+            }
+        }
+    };
+
+    run(args, shutdown).await
+}
+
+/// Run the daemon until `shutdown` resolves, then tear down and return normally.
+///
+/// Returning `Ok(())` maps to process exit status 0 (a clean stop a supervisor
+/// can trust); any setup failure returns `Err` and a non-zero status.
+async fn run(args: Args, shutdown: impl std::future::Future<Output = ()>) -> Result<()> {
     // Ensure directories exist
     std::fs::create_dir_all(&args.services_dir)?;
     std::fs::create_dir_all(&args.runtime_dir)?;
@@ -160,31 +224,56 @@ async fn main() -> Result<()> {
 
     info!("podnext-daemon listening on {:?}", args.socket);
 
-    // Handle signals for graceful shutdown
-    let socket_path = args.socket.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        info!("Shutdown signal received");
-        let _ = std::fs::remove_file(&socket_path);
-        std::process::exit(0);
-    });
+    tokio::pin!(shutdown);
 
-    // Accept connections
+    // Accept connections until a shutdown signal arrives.
+    let mut connections: JoinSet<()> = JoinSet::new();
     loop {
-        match listener.accept().await {
-            Ok((stream, _)) => {
-                let state = state.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, state).await {
-                        warn!("Connection error: {}", e);
-                    }
-                });
-            }
-            Err(e) => {
-                error!("Accept error: {}", e);
-            }
+        tokio::select! {
+            _ = &mut shutdown => break,
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _)) => {
+                    let state = state.clone();
+                    connections.spawn(async move {
+                        if let Err(e) = handle_connection(stream, state).await {
+                            warn!("Connection error: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("Accept error: {}", e);
+                }
+            },
         }
     }
+
+    // Stop accepting: drop the listener so the socket path stops taking connections.
+    drop(listener);
+
+    // Let in-flight connections finish, bounded by a grace period.
+    let drained = tokio::time::timeout(SHUTDOWN_GRACE, async {
+        while connections.join_next().await.is_some() {}
+    })
+    .await;
+
+    if drained.is_err() {
+        warn!(
+            "Grace period elapsed; aborting {} in-flight connection(s)",
+            connections.len()
+        );
+        connections.abort_all();
+        while connections.join_next().await.is_some() {}
+    }
+
+    // Clean up the socket file now that we own the shutdown.
+    if let Err(e) = std::fs::remove_file(&args.socket) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            warn!("Failed to remove socket {:?}: {}", args.socket, e);
+        }
+    }
+
+    info!("podnext-daemon shut down cleanly");
+    Ok(())
 }
 
 /// Handle a single client connection
@@ -329,5 +418,62 @@ async fn handle_subscribe(_events: broadcast::Receiver<SupervisorEvent>) -> Daem
     // For now, just return success
     DaemonResponse::Ok {
         data: serde_json::json!({"message": "Subscribed to events"}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sigterm_and_sigint_shutdown_sighup_is_ignored() {
+        assert_eq!(
+            signal_action(SignalKind::terminate()),
+            SignalAction::Shutdown
+        );
+        assert_eq!(
+            signal_action(SignalKind::interrupt()),
+            SignalAction::Shutdown
+        );
+        assert_eq!(signal_action(SignalKind::hangup()), SignalAction::Ignore);
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_removes_socket_and_returns_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = Args {
+            socket: dir.path().join("daemon.sock"),
+            services_dir: dir.path().join("services"),
+            runtime_dir: dir.path().join("run"),
+            log_dir: dir.path().join("log"),
+            interval_ms: 1000,
+            enable_cgroups: false,
+            foreground: true,
+        };
+        let socket = args.socket.clone();
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let daemon = tokio::spawn(run(args, async move {
+            let _ = rx.await;
+        }));
+
+        // Poll for readiness on state, not on a fixed duration.
+        let mut bound = false;
+        for _ in 0..250 {
+            if socket.exists() {
+                bound = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(bound, "daemon never bound the socket");
+
+        tx.send(()).unwrap();
+        let result = daemon.await.expect("daemon task panicked");
+        assert!(
+            result.is_ok(),
+            "clean shutdown should return Ok, got {result:?}"
+        );
+        assert!(!socket.exists(), "socket file was not removed on shutdown");
     }
 }
