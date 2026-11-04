@@ -169,6 +169,23 @@ impl RuntimeBackend for ProotBackend {
         };
         engine_guard.config.command = cmd;
 
+        // Publish a live session record for this foreground run/login so
+        // `podnext ps` reports the workload while the proot child is alive
+        // (issue #14). The returned File holds the LOCK_EX on the session file
+        // and is inherited (FD_CLOEXEC cleared) by the descendant; dropping it
+        // after the child exits releases the lock, and the next
+        // `active_sessions()` prunes the stale record.
+        // ponytail: pid is this process, not the proot grandchild — proot-core
+        // does not expose the child pid. Same lifetime, so the flock probe is
+        // still exact; revisit if the engine returns its child pid.
+        let _session = crate::session::register_session(
+            &container.name,
+            std::process::id(),
+            "0",
+            &engine_guard.config.command,
+        )
+        .ok();
+
         let exit_code = engine_guard.execute().await? as i32;
         Ok(exit_code)
     }
