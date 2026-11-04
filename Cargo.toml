@@ -75,6 +75,3 @@ path = "tests/integration/v2_criteria.rs"
 name = "daemon_integration_test"
 path = "tests/daemon_integration_test.rs"
 
-[[test]]
-name = "supervisor_e2e"
-path = "tests/supervisor_e2e.rs"

@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-04 13:45:13Z from `3e260dc` (chore(scripts): track the wave-5/6 remediation and verification script).
+Generated 2026-11-04 14:29:45Z from `d83b987` (docs(issues): ledger that re-verifies every issue's fix against HEAD).
 
 ## Why this exists
 
