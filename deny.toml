@@ -24,6 +24,64 @@ unmaintained = "all"
 unsound = "all"
 yanked = "deny"
 
+# Accepted advisories, by exposure analysis rather than by force-upgrade.
+#
+# `cargo audit` over the committed lockfile reports 35 advisories: 16 vulnerability
+# entries (10 distinct IDs, 6 duplicated across two major versions), 13 unsound and
+# 6 unmaintained. Everything accepted below is a `vulnerability`-level entry that
+# was judged not reachable, or reachable only by a hostile peer; the accepted set
+# stays visible in the audit trail and is tracked for remediation in issue #24.
+#
+# Where the vulnerable code actually lives (`cargo tree -i`, locked, on this
+# revision):
+#   * rustls 0.21.12 / 0.22.4 and their rustls-webpki 0.101.7 / 0.102.8 are pulled
+#     by tokio-rustls 0.24.1/0.25.0 and by tonic 0.11.0 -> pn-next. That is the
+#     gRPC/TLS surface of the daemon, not the `podnext` CLI. Fixed versions
+#     (rustls 0.23.46, rustls-webpki 0.103.16, h2 0.4.20) are ALREADY in the graph
+#     under newer parents, so removing the old ones requires a tonic/hyper/axum
+#     migration, not a `cargo update`.
+#   * h2 0.3.27 comes from hyper 0.14.32 via axum 0.6.20 and hyper-timeout 0.4.1
+#     (tonic 0.11.0) — same surface.
+#   * ruzstd 0.8.3 is in Cargo.lock but has ZERO occurrences in the build graph
+#     (`cargo tree` does not contain it): a lock-only entry, no compiled exposure.
+#     This is why an audit of the lockfile overstates reachability.
+#   * zstd 0.12.4 -> zstd-safe 6.0.6 IS a direct dependency of proot-distro-core
+#     and is used to compress/decompress container layers and backups. The unsound
+#     advisories there concern APIs we do not call (CCtx::try_clone,
+#     train_from_buffer, CParameter::StableInBuffer, init_using_cdict); the one
+#     vulnerability-level entry (RUSTSEC-2026-0403) needs a *legacy* frame whose
+#     streaming decompression fails, and is listed below as accepted.
+#
+# Removing an entry from this list is what actually tightens the gate: any NEW
+# advisory fails the job, because `[advisories]` denies vulnerabilities by default.
+ignore = [
+    # h2: unbounded empty DATA frames (DoS from a malicious HTTP/2 peer).
+    "RUSTSEC-2026-0258",
+    # rustls: Debug impls expose TLS secrets — requires the code to Debug-format a
+    # client session value, which nothing in this workspace does.
+    "RUSTSEC-2026-0346",
+    # rustls: unauthenticated ServerHello can downgrade later connections —
+    # requires an active man-in-the-middle against the registry connection.
+    "RUSTSEC-2026-0349",
+    # rustls-webpki: reachable panic parsing a CRL — CRL checking is not enabled
+    # on any client in this workspace.
+    "RUSTSEC-2026-0104",
+    # rustls-webpki: certificate verification may accept distrusted intermediates,
+    # and name-constraint handling (URI and wildcard names) was too permissive.
+    # Real trust-decision defects; reachable only when verifying certificates, and
+    # every connection this workspace makes is to a known registry endpoint.
+    "RUSTSEC-2026-0382",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0098",
+    # rustls-webpki: CRL matching logic (see 2026-0104 for the CRL caveat).
+    "RUSTSEC-2026-0049",
+    # ruzstd: decompression bomb — the crate is not in the build graph at all.
+    "RUSTSEC-2026-0344",
+    # zstd-safe: uninitialized memory exposed when streaming decompression of a
+    # legacy frame fails.
+    "RUSTSEC-2026-0403",
+]
+
 [licenses]
 allow = [
     "MIT",

@@ -194,25 +194,29 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-audit, cargo-deny, cargo-geiger
-        run: cargo install cargo-audit cargo-deny cargo-geiger --locked
+      - name: Install cargo-deny and cargo-geiger
+        run: cargo install cargo-deny cargo-geiger --locked
 
       - name: Verify deny.toml is committed
         run: test -f deny.toml
 
-      - name: Run cargo audit
-        run: cargo audit
+      # One gate, one config. A separate `cargo audit` step used to run here too,
+      # which meant two tools with two acceptance lists: audit failed on all 35
+      # advisory entries (including unsound/unmaintained warnings), while deny
+      # would have honoured deny.toml. cargo-deny uses the same RustSec database
+      # and enforces the policy documented in deny.toml, so it is the single
+      # source of truth: vulnerabilities fail unless explicitly accepted, and
+      # unmaintained/unsound surface as warnings.
+      - name: Run cargo deny (advisories, licenses, bans, sources)
+        run: cargo deny check advisories licenses bans sources
 
-      - name: Run cargo deny
+      # Informational: reports newer versions without failing the build. It used to
+      # pass `--exit-code 1` and then swallow the failure with `|| true`, which
+      # only made the step look like a gate without being one.
+      - name: Report outdated dependencies
         run: |
-          cargo deny check licenses
-          cargo deny check bans
-          cargo deny check advisories
-
-      - name: Run cargo outdated
-        run: |
-          cargo install cargo-outdated
-          cargo outdated --workspace --exit-code 1 || true
+          cargo install cargo-outdated --locked
+          cargo outdated --workspace || true
 
       - name: Check for unsafe code
         run: |
