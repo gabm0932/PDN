@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 /// Container manager
@@ -187,8 +188,15 @@ impl ContainerManager {
 
         let mut containers = self.containers.lock().await;
         if let Some(container) = containers.get_mut(name) {
+            if let Some(pid) = container.pid {
+                // Only claim Stopped once the whole group is verifiably gone.
+                if let Err(e) = terminate_group(pid, KILL_TIMEOUT_SECS).await {
+                    container.status = ContainerStatus::Error;
+                    return Err(e);
+                }
+                container.pid = None;
+            }
             container.status = ContainerStatus::Stopped;
-            container.pid = None;
             Ok(())
         } else {
             Ok(())
@@ -285,22 +293,11 @@ impl ContainerManager {
         }
 
         if let Some(pid) = container.pid {
-            // Send SIGTERM
-            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-
-            // Wait for process to exit
-            let start = std::time::Instant::now();
-            while start.elapsed().as_secs() < timeout {
-                // Check if process is still alive
-                if unsafe { libc::kill(pid as i32, 0) } != 0 {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-
-            // Force kill if still alive
-            if unsafe { libc::kill(pid as i32, 0) } == 0 {
-                unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            // SIGTERM the group, escalate to SIGKILL, and verify. A survivor is
+            // reported as an error rather than silently marked Stopped.
+            if let Err(e) = terminate_group(pid, timeout).await {
+                container.status = ContainerStatus::Error;
+                return Err(e);
             }
         }
 
@@ -615,4 +612,193 @@ fn detect_os_release(rootfs: &Path) -> Option<(String, String)> {
         }
     }
     None
+}
+
+/// How long `kill()` waits for a group to die before escalating / giving up.
+const KILL_TIMEOUT_SECS: u64 = 10;
+
+/// Signal a whole process group and only return once it is verifiably gone.
+///
+/// proot traces the guest's descendants, so signalling the leader pid alone
+/// orphans the tracees that hold the guest filesystem. The child was spawned
+/// with `process_group(0)`, so its pgid equals its pid and `kill(-pgid, ..)`
+/// reaches every descendant.
+///
+/// `kill(pid, 0)` is NOT a liveness test — it also succeeds for a zombie, which
+/// made the old loop sleep the entire timeout and then SIGKILL a corpse. We reap
+/// with waitpid and read process state from /proc instead.
+async fn terminate_group(pgid: u32, timeout: u64) -> Result<()> {
+    let group = -(pgid as i32);
+    // SIGTERM the group (falls back to the bare pid for a non-leader/gone group;
+    // ESRCH just means it already vanished and the poll below returns at once).
+    unsafe { libc::kill(group, libc::SIGTERM) };
+
+    if !wait_group_gone(pgid, timeout).await {
+        unsafe { libc::kill(group, libc::SIGKILL) };
+        if !wait_group_gone(pgid, timeout).await {
+            anyhow::bail!("process group {} survived SIGKILL", pgid);
+        }
+    }
+    Ok(())
+}
+
+/// Poll until the group has no live (non-zombie) member, up to `timeout` secs.
+async fn wait_group_gone(pgid: u32, timeout: u64) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        if !group_alive(pgid) {
+            return true;
+        }
+        if start.elapsed().as_secs() >= timeout {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Is process group `pgid` still running (zombies excluded)?
+fn group_alive(pgid: u32) -> bool {
+    // Reap the leader if we are its parent and it already exited, so a zombie
+    // does not read as alive.
+    unsafe { libc::waitpid(pgid as i32, std::ptr::null_mut(), libc::WNOHANG) };
+    live_pgrps().contains(&(pgid as i32))
+}
+
+/// pgrp of every live (non-zombie) process, parsed from /proc/<pid>/stat.
+fn live_pgrps() -> Vec<i32> {
+    let mut out = Vec::new();
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return out;
+    };
+    for entry in dir.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !name.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", name)) else {
+            continue;
+        };
+        // field 2 (comm) may contain spaces/parens; fields resume after the last ')'.
+        // Fields: state ppid pgrp session ...
+        let Some(close) = stat.rfind(')') else {
+            continue;
+        };
+        let mut fields = stat[close + 1..].split_whitespace();
+        let state = fields.next().unwrap_or("");
+        if state.starts_with('Z') {
+            continue;
+        }
+        let _ppid = fields.next();
+        if let Some(pgrp) = fields.next().and_then(|s| s.parse::<i32>().ok()) {
+            out.push(pgrp);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::process::CommandExt;
+
+    fn count_group(pgid: u32) -> usize {
+        live_pgrps()
+            .into_iter()
+            .filter(|p| *p == pgid as i32)
+            .count()
+    }
+
+    /// A container whose process tree forks children must leave NOTHING behind
+    /// after kill(). Observable assertion: no pid is left in the group.
+    #[tokio::test]
+    async fn kill_leaves_no_surviving_descendant() {
+        // Stand-in for proot: a shell that forks two long sleepers and waits.
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("sleep 300 & sleep 300 & wait")
+            .process_group(0)
+            .spawn()
+            .expect("spawn sh");
+        let pgid = child.id();
+
+        // Wait (bounded) until the descendants have actually forked.
+        let mut members = 0;
+        for _ in 0..100 {
+            members = count_group(pgid);
+            if members >= 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            members >= 2,
+            "expected >=2 descendants in group {pgid}, saw {members}"
+        );
+
+        terminate_group(pgid, 5).await.expect("terminate group");
+
+        let left = count_group(pgid);
+        assert_eq!(
+            left, 0,
+            "{left} descendant(s) survived kill in group {pgid}"
+        );
+        let _ = child.wait(); // reap our own handle if not already reaped
+    }
+
+    /// A zombie satisfies kill(pid, 0), so the old wait loop could not break
+    /// early and burned the full timeout. The new predicate reports it gone.
+    #[test]
+    fn zombie_is_not_reported_alive() {
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .process_group(0)
+            .spawn()
+            .expect("spawn sh");
+        let pid = child.id();
+
+        // Wait until it has exited but is not reaped: a zombie.
+        for _ in 0..200 {
+            if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                if let Some(close) = stat.rfind(')') {
+                    if stat[close + 1..].trim_start().starts_with('Z') {
+                        break;
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // Observable fact 1: the OLD liveness test calls a zombie "alive".
+        assert_eq!(
+            unsafe { libc::kill(pid as i32, 0) },
+            0,
+            "a zombie should satisfy kill(pid, 0)"
+        );
+
+        // Evidence (printed, never asserted): the old loop cannot break on a
+        // zombie, so it runs the whole timeout; the new predicate returns now.
+        let timeout = 1u64;
+        let t0 = std::time::Instant::now();
+        while t0.elapsed().as_secs() < timeout {
+            if unsafe { libc::kill(pid as i32, 0) } != 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let old_elapsed = t0.elapsed();
+
+        // Observable fact 2: the NEW predicate reaps/ignores zombies.
+        let t1 = std::time::Instant::now();
+        let alive = group_alive(pid);
+        let new_elapsed = t1.elapsed();
+        assert!(!alive, "a zombie must not count as a live process");
+
+        eprintln!(
+            "zombie pid {pid}: old kill(pid,0) loop = {old_elapsed:?} (full {timeout}s timeout), new predicate = {new_elapsed:?}"
+        );
+        let _ = child.wait();
+    }
 }
