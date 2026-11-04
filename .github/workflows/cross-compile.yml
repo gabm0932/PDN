@@ -191,8 +191,17 @@ jobs:
 
       - name: Generate combined SHA-256 checksums
         run: |
-          find all-artifacts -type f -name "*.so" -o -name "podnext" | xargs sha256sum > all-artifacts/COMBINED_SHA256SUMS.txt 2>/dev/null || true
-          cat all-artifacts/COMBINED_SHA256SUMS.txt
+          mkdir -p all-artifacts
+          # `-o` binds looser than the implicit -a, so without the grouping this
+          # matched `-name podnext` even for directories and fed a directory to
+          # sha256sum. -print0/-0 keeps paths with spaces intact.
+          find all-artifacts -type f \( -name "*.so" -o -name "podnext" \) -print0 \
+            | xargs -0 sha256sum > all-artifacts/COMBINED_SHA256SUMS.txt 2>/dev/null || true
+          if [ -s all-artifacts/COMBINED_SHA256SUMS.txt ]; then
+            cat all-artifacts/COMBINED_SHA256SUMS.txt
+          else
+            echo "::warning::no cross-compile artifacts were downloaded; nothing to checksum"
+          fi
 
       - name: Upload combined artifacts with checksums
         uses: actions/upload-artifact@v7

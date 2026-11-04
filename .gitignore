@@ -1,6 +1,10 @@
 # Rust
 target/
-Cargo.lock
+# Cargo.lock is tracked on purpose. PDN builds applications (podnext,
+# podnext-daemon, pn-gateway), not just libraries: committing the lock is what
+# makes `--locked` in CI meaningful and the builds reproducible. Ignoring it
+# meant every CI run resolved dependencies afresh, so a passing run could not be
+# reproduced from the commit.
 
 # IDE
 .vscode/
