@@ -174,7 +174,7 @@ impl ProotDistroCore {
 
         let exit_code = self
             .container_manager
-            .execute(&options.container_name, command)
+            .execute_container(&container, command)
             .await?;
         pn_trace!("[DEBUG login] Exit code: {}", exit_code);
         if exit_code != 0 {

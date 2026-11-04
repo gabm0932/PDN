@@ -330,6 +330,11 @@ impl ContainerManager {
         backend.execute(&container, command).await
     }
 
+    pub async fn execute_container(&self, container: &Container, command: Vec<String>) -> Result<i32> {
+        let backend = self.get_backend(container);
+        backend.execute(container, command).await
+    }
+
     pub fn backup(&self, _container: &Container, _dest: &Path) -> Result<()> {
         // Implementation for backing up container
         Ok(())
