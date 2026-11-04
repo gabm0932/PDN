@@ -7,8 +7,20 @@ on:
   push:
     branches: [master, main, develop]
     tags: ['v*']
+    paths:
+      - 'crates/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/**'
   pull_request:
     branches: [master, main, develop]
+    paths:
+      - 'crates/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/**'
   workflow_dispatch:
     inputs:
       ndk_version:
@@ -17,6 +29,10 @@ on:
         default: 'r27c'
         type: choice
         options: ['r27c', 'r30']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -50,7 +66,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 0
@@ -73,7 +89,7 @@ jobs:
           sudo systemctl restart systemd-binfmt || true
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -121,17 +137,17 @@ jobs:
 
       - name: Build workspace for ${{ matrix.target }}
         run: |
-          cargo build --workspace --release --target ${{ matrix.target }}
+          cargo build --workspace --release --locked --target ${{ matrix.target }}
 
       - name: Build tests for ${{ matrix.target }}
         if: matrix.target == 'aarch64-linux-android'
         run: |
-          cargo test --workspace --release --target ${{ matrix.target }} --no-run
+          cargo test --workspace --release --locked --target ${{ matrix.target }} --no-run
 
       - name: Run tests for ${{ matrix.target }} (with qemu)
         if: matrix.target == 'x86_64-linux-android'
         run: |
-          cargo test --workspace --release --target ${{ matrix.target }} -- --test-threads=2 || echo "x86_64 tests may have qemu limitations"
+          cargo test --workspace --release --locked --target ${{ matrix.target }} -- --test-threads=2 || echo "x86_64 tests may have qemu limitations"
 
       - name: Verify Android binaries
         run: |
@@ -151,7 +167,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Upload artifacts (${{ matrix.ndk }}/${{ matrix.target }})
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pn-android-${{ matrix.ndk }}-${{ matrix.target }}
           path: |
@@ -167,7 +183,7 @@ jobs:
     if: always()
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: all-artifacts
           pattern: pn-android-*
@@ -179,7 +195,7 @@ jobs:
           cat all-artifacts/COMBINED_SHA256SUMS.txt
 
       - name: Upload combined artifacts with checksums
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pn-android-all-targets-checksums
           path: all-artifacts/

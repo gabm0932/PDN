@@ -2,10 +2,26 @@ name: Benchmark
 
 on:
   push:
-    branches: [master, main, develop]
+    branches: [master, develop]
+    paths:
+      - 'crates/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/**'
   pull_request:
-    branches: [master, main, develop]
+    branches: [master, develop]
+    paths:
+      - 'crates/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/**'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   benchmark:
@@ -14,7 +30,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0  # Need full history for baseline comparison
 
@@ -24,7 +40,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -37,27 +53,40 @@ jobs:
       - name: Install criterion
         run: cargo install cargo-criterion
 
+      - name: Verify benchmark targets exist
+        run: |
+          # A green benchmark check must mean benchmarks actually ran: fail if the
+          # workspace declares no [[bench]] target (otherwise cargo bench is a no-op).
+          if ! grep -rq --include=Cargo.toml "^\[\[bench\]\]" crates/ Cargo.toml; then
+            echo "::error::No [[bench]] targets found in the workspace; cargo bench would measure nothing."
+            exit 1
+          fi
+          echo "Benchmark targets found:"
+          grep -rn --include=Cargo.toml "^\[\[bench\]\]" crates/ Cargo.toml
+
       - name: Run benchmarks
         run: |
-          cargo bench --workspace --no-run 2>&1 | tail -20
-          cargo bench --workspace 2>&1 | tee benchmark-output.txt
+          cargo bench --workspace --locked --no-run 2>&1 | tail -20
+          cargo bench --workspace --locked 2>&1 | tee benchmark-output.txt
 
       - name: Compare with baseline
         if: github.event_name == 'pull_request' && github.event.pull_request.base.repo.full_name == github.repository
         run: |
-          # Get baseline from main branch
-          git fetch origin main:main
+          # Derive the baseline from the PR's base branch at runtime, so this does not
+          # hardcode a default branch name that may not exist (repo default: master).
+          BASEREF="${{ github.base_ref }}"
+          git fetch origin "$BASEREF:$BASEREF"
           git stash
-          git checkout main
-          cargo bench --workspace 2>&1 | tee benchmark-baseline.txt
+          git checkout "$BASEREF"
+          cargo bench --workspace --locked 2>&1 | tee benchmark-baseline.txt
           git checkout -
           git stash pop
-          
+
           # Compare results (simplified - in practice use criterion's comparison)
           echo "::notice::Benchmark comparison completed. Check artifacts for details."
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: |
@@ -67,7 +96,7 @@ jobs:
 
       - name: Comment benchmark results on PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');

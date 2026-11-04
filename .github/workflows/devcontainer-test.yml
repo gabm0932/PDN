@@ -10,6 +10,10 @@ on:
       - '.devcontainer/**'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   devcontainer-test:
     name: Test DevContainer Build
@@ -17,7 +21,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build DevContainer
         uses: devcontainers/ci@v0.3
@@ -29,4 +33,4 @@ jobs:
       - name: Test DevContainer
         run: |
           docker run --rm ghcr.io/michaelamoetoevsky/pdn-devcontainer:dev \
-            bash -c "cargo --version && rustc --version && cargo build --workspace 2>&1 | tail -10"
+            bash -c "cargo --version && rustc --version && cargo build --workspace --locked 2>&1 | tail -10"

@@ -7,14 +7,32 @@ on:
   push:
     branches: [master, main, develop]
     tags: ['v*']
+    paths:
+      - 'crates/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/**'
   pull_request:
     branches: [master, main, develop]
+    paths:
+      - 'crates/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/**'
   workflow_dispatch:
     inputs:
       release_version:
         description: 'Release version (e.g., v1.0.0)'
         required: false
         type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,7 +46,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
@@ -39,7 +57,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -50,7 +68,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: target
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
@@ -72,19 +90,19 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run cargo clippy
-        run: cargo clippy --workspace --all-features
+        run: cargo clippy --workspace --all-features --locked
 
       - name: Build workspace (release)
-        run: cargo build --workspace --release
+        run: cargo build --workspace --release --locked
 
       - name: Run tests
-        run: cargo test --workspace --release -- --test-threads=4
+        run: cargo test --workspace --release --locked -- --test-threads=4
 
       - name: Build podnext binary
-        run: cargo build --package podnext --release
+        run: cargo build --package podnext --release --locked
 
       - name: Upload podnext artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: podnext-${{ runner.os }}-${{ runner.arch }}
           path: target/release/podnext
@@ -97,7 +115,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
@@ -113,7 +131,7 @@ jobs:
           ndk-version: r27c
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -144,7 +162,7 @@ jobs:
           export CXX_aarch64_linux_android="${TOOLCHAIN_BIN}/aarch64-linux-android34-clang++"
           export AR_aarch64_linux_android="${TOOLCHAIN_BIN}/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${TOOLCHAIN_BIN}/aarch64-linux-android34-clang"
-          cargo build --workspace --release --target aarch64-linux-android
+          cargo build --workspace --release --locked --target aarch64-linux-android
 
       - name: Verify Android binaries
         run: |
@@ -153,7 +171,7 @@ jobs:
           file target/aarch64-linux-android/release/libproot_distro_core.so || true
 
       - name: Upload Android artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pn-android-aarch64
           path: |
@@ -168,7 +186,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
@@ -176,27 +194,20 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-audit
-        uses: actions-rs/install@v0.1
-        with:
-          crate: cargo-audit
-          version: latest
+      - name: Install cargo-audit, cargo-deny, cargo-geiger
+        run: cargo install cargo-audit cargo-deny cargo-geiger --locked
 
-      - name: Install cargo-deny
-        uses: actions-rs/install@v0.1
-        with:
-          crate: cargo-deny
-          version: latest
+      - name: Verify deny.toml is committed
+        run: test -f deny.toml
 
       - name: Run cargo audit
-        run: cargo audit || true
+        run: cargo audit
 
       - name: Run cargo deny
         run: |
-          cargo deny init || true
-          cargo deny check licenses || true
-          cargo deny check bans || true
-          cargo deny check advisories || true
+          cargo deny check licenses
+          cargo deny check bans
+          cargo deny check advisories
 
       - name: Run cargo outdated
         run: |
@@ -205,11 +216,11 @@ jobs:
 
       - name: Check for unsafe code
         run: |
-          cargo geiger --workspace --output-format json > geiger-report.json || true
-          cat geiger-report.json | jq '.packages[] | select(.unsafe > 0) | {name: .name, unsafe: .unsafe}' || true
+          cargo geiger --workspace --output-format json > geiger-report.json
+          cat geiger-report.json | jq '.packages[] | select(.unsafe > 0) | {name: .name, unsafe: .unsafe}'
 
       - name: Upload security reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: security-reports
           path: |
@@ -223,7 +234,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -243,7 +254,7 @@ jobs:
           fi
 
       - name: Upload documentation
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: documentation
           path: docs/book/
@@ -256,7 +267,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -282,7 +293,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
@@ -291,7 +302,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -315,7 +326,7 @@ jobs:
             bzip2
 
       - name: Build workspace
-        run: cargo build --workspace --release
+        run: cargo build --workspace --release --locked
 
       - name: Test podnext basic commands
         run: |
@@ -329,27 +340,27 @@ jobs:
       - name: Test PRoot compatibility layer
         run: |
           # Test that the compatibility layer compiles and basic functions work
-          cargo test --package proot-compat --release
-          cargo test --package proot-core --release
-          cargo test --package proot-distro-core --release
-          cargo test --package pn-gateway --release
-          cargo test --package pn-next --release
+          cargo test --package proot-compat --release --locked
+          cargo test --package proot-core --release --locked
+          cargo test --package proot-distro-core --release --locked
+          cargo test --package pn-gateway --release --locked
+          cargo test --package pn-next --release --locked
 
       - name: Test gateway fail-safe mechanisms
         run: |
-          cargo test --package pn-gateway fail_safe --release -- --nocapture
+          cargo test --package pn-gateway fail_safe --release --locked -- --nocapture
 
       - name: Test guardrails
         run: |
-          cargo test --package pn-gateway guardrails --release -- --nocapture
+          cargo test --package pn-gateway guardrails --release --locked -- --nocapture
 
       - name: Test health monitoring
         run: |
-          cargo test --package pn-gateway health --release -- --nocapture
+          cargo test --package pn-gateway health --release --locked -- --nocapture
 
       - name: Test metrics collection
         run: |
-          cargo test --package pn-gateway metrics --release -- --nocapture
+          cargo test --package pn-gateway metrics --release --locked -- --nocapture
 
   # Job 8: Release
   release:
@@ -363,7 +374,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -371,7 +382,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -387,7 +398,7 @@ jobs:
           ndk-version: r27c
 
       - name: Build release binaries (host)
-        run: cargo build --workspace --release
+        run: cargo build --workspace --release --locked
 
       - name: Build release binaries (Android aarch64)
         run: |
@@ -399,7 +410,7 @@ jobs:
           export CXX_aarch64_linux_android="${TOOLCHAIN_BIN}/aarch64-linux-android34-clang++"
           export AR_aarch64_linux_android="${TOOLCHAIN_BIN}/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${TOOLCHAIN_BIN}/aarch64-linux-android34-clang"
-          cargo build --workspace --release --target aarch64-linux-android
+          cargo build --workspace --release --locked --target aarch64-linux-android
 
       - name: Create release archives
         id: create-archives
@@ -434,7 +445,7 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: PDN ${{ github.ref_name }}
