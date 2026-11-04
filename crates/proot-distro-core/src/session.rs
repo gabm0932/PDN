@@ -28,7 +28,11 @@ pub fn sessions_dir() -> PathBuf {
     }
     let home = dirs::home_dir()
         .or_else(|| std::env::var("HOME").ok().map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
+        // `/tmp` is not writable by an app uid on Android, and `std::env::temp_dir()`
+        // resolves to it when TMPDIR is unset — a fallback to `/tmp` here made
+        // session registration fail silently (the caller treats it as best-effort),
+        // so `podnext ps` stayed empty with no error anywhere.
+        .unwrap_or_else(crate::paths::temp_base);
     home.join(".podnext").join("sessions")
 }
 
