@@ -273,12 +273,13 @@ jobs:
         with:
           targets: aarch64-linux-android, x86_64-linux-android
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-
-      - name: Run cargo-audit
-        run: cargo audit
-
+      # `cargo audit` used to run here unconditionally. It has no way to read the
+      # acceptance list in deny.toml, so it reported all 35 advisory entries
+      # (including the accepted vulnerabilities and the unsound/unmaintained
+      # warnings) and would have failed this job the moment a release fired — a
+      # latent break, invisible because release.yml only runs on tags. `cargo deny`
+      # below uses the same RustSec database and enforces deny.toml, so it is the
+      # single gate here too, exactly as in ci.yml.
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
