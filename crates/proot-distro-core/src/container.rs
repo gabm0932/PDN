@@ -363,6 +363,8 @@ pub struct ContainerConfig {
     pub gpu: Option<GpuConfig>,
     #[serde(default)]
     pub runtime: RuntimeKind,
+    #[serde(default)]
+    pub isolated: bool,
 }
 
 impl Default for ContainerConfig {
@@ -386,6 +388,7 @@ impl Default for ContainerConfig {
             annotations: HashMap::new(),
             gpu: Some(GpuConfig::default()),
             runtime: RuntimeKind::default(),
+            isolated: false,
         }
     }
 }

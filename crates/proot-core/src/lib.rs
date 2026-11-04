@@ -152,7 +152,7 @@ impl ProotEngine {
     }
 
     /// Add Android/Termux system binds required for dynamic linker to work
-    fn add_android_system_binds(cmd: &mut Command) {
+    fn add_android_system_binds(cmd: &mut Command, isolated: bool) {
         // Android system directories - required for dynamic linker
         cmd.arg("--bind=/apex");
         cmd.arg("--bind=/odm");
@@ -164,6 +164,11 @@ impl ProotEngine {
         // Linker config - required for dynamic linker
         cmd.arg("--bind=/linkerconfig/ld.config.txt");
         cmd.arg("--bind=/linkerconfig/com.android.art/ld.config.txt");
+
+        // In isolated mode, skip all host user storage, home directories, and caches
+        if isolated {
+            return;
+        }
 
         // Termux prefix - required for Termux utilities
         if let Ok(prefix) = std::env::var("TERMUX_PREFIX") {
@@ -255,7 +260,7 @@ impl ProotEngine {
         cmd.arg("--bind=/sys");
 
         // Android/Termux system binds required for dynamic linker
-        Self::add_android_system_binds(&mut cmd);
+        Self::add_android_system_binds(&mut cmd, self.config.isolated);
 
         // Environment variables — allow-listed guest env (see execute()).
         cmd.env_clear();
@@ -364,7 +369,7 @@ impl ProotEngine {
         cmd.arg("--bind=/sys");
 
         // Android/Termux system binds required for dynamic linker
-        Self::add_android_system_binds(&mut cmd);
+        Self::add_android_system_binds(&mut cmd, self.config.isolated);
 
         // Environment variables
         //

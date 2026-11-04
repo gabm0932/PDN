@@ -148,7 +148,10 @@ impl ProotDistroCore {
     }
 
     pub async fn login(&mut self, options: LoginOptions) -> Result<()> {
-        let container = self.container_manager.get(&options.container_name).await?;
+        let mut container = self.container_manager.get(&options.container_name).await?;
+        if options.isolated {
+            container.config.isolated = true;
+        }
         pn_trace!("[DEBUG login] Got container: {}", options.container_name);
         pn_trace!(
             "[DEBUG login] Container rootfs: {:?}",

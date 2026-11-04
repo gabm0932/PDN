@@ -109,6 +109,7 @@ impl RuntimeBackend for ProotBackend {
 
         // Configure proot from container config
         engine_guard.config.rootfs = Some(container.rootfs_path.clone());
+        engine_guard.config.isolated = container.config.isolated;
         engine_guard.config.bind = container
             .config
             .bind_mounts

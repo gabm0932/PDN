@@ -61,6 +61,10 @@ pub struct ProotConfig {
     #[arg(long = "sysvipc")]
     pub sysvipc: bool,
 
+    /// Isolated mode (do not bind host storage, dalvik cache, or host home directory)
+    #[arg(long = "isolated")]
+    pub isolated: bool,
+
     /// Verbose output
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -86,6 +90,7 @@ impl Default for ProotConfig {
             kill_on_exit: true,
             link2symlink: true,
             sysvipc: true,
+            isolated: false,
             verbose: 0,
             command: Vec::new(),
         }

@@ -288,6 +288,9 @@ enum Commands {
         /// User to run as
         #[arg(short, long)]
         user: Option<String>,
+        /// Run in isolated mode (do not mount host storage or Termux home directory)
+        #[arg(long = "isolated")]
+        isolated: bool,
         /// Command to run instead of shell (after --)
         #[arg(last = true)]
         command: Vec<String>,
@@ -349,6 +352,9 @@ enum Commands {
         /// Working directory inside the container
         #[arg(long = "workdir", global = false)]
         workdir: Option<String>,
+        /// Run in isolated mode (do not mount host storage or Termux home directory)
+        #[arg(long = "isolated", global = false)]
+        isolated: bool,
     },
 
     /// [Container] List active sessions
@@ -1723,8 +1729,9 @@ async fn execute_command(cmd: Commands) -> Result<()> {
         Commands::Login {
             container,
             user,
+            isolated,
             command,
-        } => cmd_login(container, user, command).await,
+        } => cmd_login(container, user, isolated, command).await,
         Commands::Run {
             container,
             command,
@@ -1739,6 +1746,7 @@ async fn execute_command(cmd: Commands) -> Result<()> {
             interactive,
             user,
             workdir,
+            isolated,
         } => {
             cmd_run(
                 container,
@@ -1754,6 +1762,7 @@ async fn execute_command(cmd: Commands) -> Result<()> {
                 interactive,
                 user,
                 workdir,
+                isolated,
             )
             .await
         }
@@ -1890,14 +1899,19 @@ async fn cmd_list(all: bool, no_all: bool, format: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_login(container: String, user: Option<String>, command: Vec<String>) -> Result<()> {
+async fn cmd_login(
+    container: String,
+    user: Option<String>,
+    isolated: bool,
+    command: Vec<String>,
+) -> Result<()> {
     let cmd = if command.is_empty() {
         vec!["/bin/sh".to_string()]
     } else {
         command
     };
 
-    login_container_native(&container, user, cmd).await
+    login_container_native(&container, user, isolated, cmd).await
 }
 
 async fn cmd_run(
@@ -1914,18 +1928,13 @@ async fn cmd_run(
     _interactive: bool,
     _user: Option<String>,
     _workdir: Option<String>,
+    isolated: bool,
 ) -> Result<()> {
-    // TODO: Implement full Podman-compatible run options
-    // For now, just pass the command to the container
-    // Future: Implement container creation with all options
-
-    // For now, if detach is requested, we need to handle it differently
     if detach {
         eprintln!("Warning: --detach/-d not fully implemented yet, running in foreground");
     }
 
-    // For now, just run the command in the existing container
-    run_container_native(&container, command).await
+    run_container_native(&container, command, isolated).await
 }
 
 async fn cmd_ps(format: OutputFormat) -> Result<()> {
@@ -2063,7 +2072,7 @@ async fn cmd_attach(container: String, user: Option<String>, command: Vec<String
         command
     };
 
-    login_container_native(&container, user, cmd).await
+    login_container_native(&container, user, false, cmd).await
 }
 
 async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result<()> {

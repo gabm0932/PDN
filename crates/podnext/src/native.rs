@@ -482,6 +482,7 @@ pub async fn list_containers_native(all: bool) -> Result<Vec<proot_distro_core::
 pub async fn login_container_native(
     container_name: &str,
     user: Option<String>,
+    isolated: bool,
     command: Vec<String>,
 ) -> Result<()> {
     pn_trace!("[DEBUG native] Creating ProotDistroCore");
@@ -490,6 +491,7 @@ pub async fn login_container_native(
 
     let mut options = proot_distro_core::LoginOptions::default();
     options.container_name = container_name.to_string();
+    options.isolated = isolated;
     pn_trace!("[DEBUG native] Default command: {:?}", options.command);
     options.command = if command.is_empty() {
         vec!["/bin/sh".to_string()]
@@ -508,10 +510,18 @@ pub async fn login_container_native(
     Ok(())
 }
 
-pub async fn run_container_native(container_name: &str, command: Vec<String>) -> Result<()> {
+pub async fn run_container_native(
+    container_name: &str,
+    command: Vec<String>,
+    isolated: bool,
+) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
-
-    let exit_code = container_mgr.execute(container_name, command).await?;
+    let mut container = container_mgr.get(container_name).await?;
+    if isolated {
+        container.config.isolated = true;
+    }
+    let backend = container_mgr.get_backend(&container);
+    let exit_code = backend.execute(&container, command).await?;
     if exit_code != 0 {
         return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
     }
