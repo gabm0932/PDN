@@ -33,7 +33,7 @@ impl ShmManager {
                 // On Android/Termux, use a writable directory in home
                 dirs::home_dir().map(|h| h.join(".local").join("run").join("pn-next"))
             })
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/pn-next"));
+            .unwrap_or_else(|| crate::paths::temp_base().join("pn-next"));
 
         std::fs::create_dir_all(&shm_dir)?;
 

@@ -4,6 +4,10 @@
 
 set -e
 
+# Writable temp dir: $TMPDIR, else $PREFIX/tmp on Termux, else /tmp on Linux hosts.
+: "${TMPDIR:=${PREFIX:+$PREFIX/tmp}}"
+: "${TMPDIR:=/tmp}"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -75,7 +79,7 @@ BIN_URL="https://github.com/${REPO}/releases/download/${LATEST_VERSION}/podnext-
 
 # Try .deb first (preferred for Termux)
 echo -e "${BLUE}Downloading PDN package...${NC}"
-TEMP_DEB="/tmp/pdn_${LATEST_VERSION#v}_${TARGET}.deb"
+TEMP_DEB="$TMPDIR/pdn_${LATEST_VERSION#v}_${TARGET}.deb"
 
 if curl -fsSL -o "$TEMP_DEB" "$DEB_URL" 2>/dev/null; then
     echo -e "${GREEN}Downloaded .deb package${NC}"
@@ -91,7 +95,7 @@ else
     
     # Fallback to binary
     mkdir -p "$INSTALL_DIR"
-    TEMP_BIN="/tmp/podnext-${TARGET}"
+    TEMP_BIN="$TMPDIR/podnext-${TARGET}"
     
     if curl -fsSL -o "$TEMP_BIN" "$BIN_URL" 2>/dev/null; then
         chmod +x "$TEMP_BIN"
@@ -100,9 +104,9 @@ else
         # Also get daemon and gateway if available
         for BIN in podnext-daemon pn-gateway; do
             BIN_URL="https://github.com/${REPO}/releases/download/${LATEST_VERSION}/${BIN}-${TARGET}"
-            if curl -fsSL -o "/tmp/${BIN}-${TARGET}" "$BIN_URL" 2>/dev/null; then
-                chmod +x "/tmp/${BIN}-${TARGET}"
-                mv "/tmp/${BIN}-${TARGET}" "$INSTALL_DIR/${BIN}"
+            if curl -fsSL -o "$TMPDIR/${BIN}-${TARGET}" "$BIN_URL" 2>/dev/null; then
+                chmod +x "$TMPDIR/${BIN}-${TARGET}"
+                mv "$TMPDIR/${BIN}-${TARGET}" "$INSTALL_DIR/${BIN}"
             fi
         done
         

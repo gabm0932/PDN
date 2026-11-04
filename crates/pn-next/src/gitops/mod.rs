@@ -483,8 +483,7 @@ impl GitOpsManager {
         let repo_path = match std::env::var("PDN_GITOPS_DIR") {
             Ok(v) if !v.is_empty() => PathBuf::from(v),
             // Android has no writable `/tmp`; `$TMPDIR` (Termux) is what exists.
-            _ => PathBuf::from(std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string()))
-                .join("pdn-gitops"),
+            _ => proot_distro_core::paths::temp_base().join("pdn-gitops"),
         };
 
         Self {

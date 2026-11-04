@@ -2063,9 +2063,8 @@ async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathB
         println!("Base image: {}", base_image);
     }
 
-    let scratch_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
-    let out_layer_tar = std::path::PathBuf::from(scratch_dir)
-        .join(format!("build_layer_{}.tar.gz", uuid::Uuid::new_v4()));
+    let scratch_dir = proot_distro_core::paths::temp_base();
+    let out_layer_tar = scratch_dir.join(format!("build_layer_{}.tar.gz", uuid::Uuid::new_v4()));
 
     if path.exists() {
         let dummy_base = tempfile::tempdir()?;

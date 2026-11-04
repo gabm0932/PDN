@@ -73,7 +73,7 @@ pub use login::{LoginManager, LoginOptions};
 pub use message::{Message, MessageLevel};
 pub use names::NameValidator;
 pub use network::{NetworkInfo, NetworkManager};
-pub use paths::{ContainerPaths, PathResolver};
+pub use paths::{temp_base, ContainerPaths, PathResolver};
 pub use progress::ProgressTracker;
 pub use runtime::{ProotBackend, RuntimeBackend, RuntimeKind, RuntimeStatus, UmlBackend};
 pub use security::{

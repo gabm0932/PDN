@@ -47,7 +47,7 @@ pub struct StorageManager {
 impl StorageManager {
     pub fn new() -> Result<Self, Error> {
         let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .unwrap_or_else(|| crate::paths::temp_base())
             .join("podnext");
         std::fs::create_dir_all(&config_dir)?;
         let config_path = config_dir.join("volumes.toml");

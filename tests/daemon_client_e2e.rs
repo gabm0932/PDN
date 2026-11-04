@@ -9,7 +9,9 @@ use tokio::time::timeout;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("PREFIX").map(|p| format!("{p}/tmp")))
+        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
     let socket_path = format!("{}/.local/run/pn-next/daemon.sock", home);
 
     // Connect to daemon

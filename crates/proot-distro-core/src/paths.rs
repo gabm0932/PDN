@@ -1,7 +1,28 @@
 //! Path management for PRoot Distro
 
 use anyhow::Result;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+
+/// Resolve a writable temp base directory from explicit environment values.
+///
+/// Split out from [`temp_base`] so the resolution order is testable without
+/// mutating the process environment.
+fn resolve_temp_base(tmpdir: Option<OsString>, prefix: Option<OsString>) -> PathBuf {
+    tmpdir
+        .map(PathBuf::from)
+        .or_else(|| prefix.map(|p| PathBuf::from(p).join("tmp")))
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Resolve a writable temp base directory.
+///
+/// `/tmp` is not writable by an app uid on Android, and `std::env::temp_dir()`
+/// falls back to it when `TMPDIR` is unset, so it must never be used alone.
+/// Order: `$TMPDIR` -> `$PREFIX/tmp` -> `std::env::temp_dir()`.
+pub fn temp_base() -> PathBuf {
+    resolve_temp_base(std::env::var_os("TMPDIR"), std::env::var_os("PREFIX"))
+}
 
 /// Container paths
 pub struct ContainerPaths {
@@ -19,7 +40,7 @@ impl ContainerPaths {
             .or_else(|| std::env::var("HOME").ok().map(PathBuf::from))
             .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
             .or_else(|| std::env::var("PN_TEST_ROOT").ok().map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from("/tmp/pn-next-test"));
+            .unwrap_or_else(|| temp_base().join("pn-next-test"));
 
         // Ensure we can create the directory
         std::fs::create_dir_all(&root)?;
@@ -102,5 +123,26 @@ impl PathResolver {
         } else {
             self.guest_root.join(path)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tmpdir_takes_priority() {
+        let got = resolve_temp_base(
+            Some(OsString::from("/custom/tmp")),
+            Some(OsString::from("/data/usr")),
+        );
+        assert_eq!(got, PathBuf::from("/custom/tmp"));
+    }
+
+    #[test]
+    fn prefix_tmp_used_when_tmpdir_unset_and_is_not_tmp() {
+        let got = resolve_temp_base(None, Some(OsString::from("/data/usr")));
+        assert_eq!(got, PathBuf::from("/data/usr/tmp"));
+        assert_ne!(got, PathBuf::from("/tmp"));
     }
 }

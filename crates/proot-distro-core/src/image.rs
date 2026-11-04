@@ -26,7 +26,7 @@ pub struct ImageManager {
 impl ImageManager {
     pub fn new() -> Result<Self> {
         let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .unwrap_or_else(|| crate::paths::temp_base())
             .join("pn-next")
             .join("images");
 
