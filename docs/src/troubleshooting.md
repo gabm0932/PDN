@@ -426,3 +426,19 @@ tar czf debug-logs.tar.gz debug-logs/
 - [Configuration](configuration.md) - Configuration options
 - [CLI Reference](cli-reference.md) - All commands
 - [Development](development.md) - Debugging tools
+## Concurrent writes to the same file
+
+If two or more `podnext run` or `podnext login` invocations write to the **same file** at the same
+time, one write wins and the others are lost. This is POSIX last-writer-wins: an `>` open truncates
+the file, and there is no ordering guarantee between unsynchronised processes.
+
+PDN does not change this, and does not add anything on the write path: no serialisation, no staging
+file, no copy-up. The guest filesystem is a plain host directory, so the guest's `write()` reaches
+the host kernel directly. Concurrent runs against one container share a single mutable filesystem
+with no atomicity guarantee, and any synchronisation is the workload's own responsibility.
+
+Measured, so it is not speculation: the same five-worker experiment run (a) with plain host
+processes, no PDN anywhere, and (b) through `podnext run`, produced the identical result -- 4 of 5
+writes clobbered, file left with exactly one line -- in every run of both. If you need
+read-modify-write across concurrent invocations, use a file lock (`flock`) in your command, or give
+each writer its own path and merge afterwards.
