@@ -3114,7 +3114,7 @@ async fn cmd_copy(source: String, destination: String, recursive: bool, move_: b
         let _ = std::fs::remove_file(&dest);
         std::os::unix::fs::symlink(&link, &dest)?;
     } else {
-        std::fs::copy(&src, &dest)?;
+        copy_preserving_holes(&src, &dest)?;
     }
 
     if move_ {
@@ -3234,6 +3234,87 @@ fn file_digest(path: &std::path::Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Copy `src` onto `dst`, keeping holes as holes.
+///
+/// `std::fs::copy` densifies a sparse source: on Android/aarch64 its
+/// `copy_file_range` fast path is unavailable, so it falls back to a loop that
+/// reads and writes every logical byte — a 1 GiB file holding 16 KiB of data
+/// becomes a 1 GiB allocation (issue #18). Walking the source with
+/// `SEEK_DATA`/`SEEK_HOLE` copies only the live regions; the gaps stay holes and
+/// the final length is fixed with `set_len`, so non-sparse content is still
+/// byte-exact. A filesystem without `SEEK_DATA` support takes the old dense path
+/// rather than failing.
+fn copy_preserving_holes(src: &std::path::Path, dst: &std::path::Path) -> Result<u64> {
+    let src_len = std::fs::metadata(src)?.len();
+    let mut input = std::fs::File::open(src)?;
+    let mut output = std::fs::File::create(dst)?;
+
+    if let Err(e) = copy_data_regions(&mut input, &mut output) {
+        // A half-written destination is worse than none; `fs::copy` also removes
+        // the target when it fails.
+        let _ = std::fs::remove_file(dst);
+        return Err(e.into());
+    }
+
+    // Extend a trailing hole (or shrink a longer destination) to the source size.
+    output.set_len(src_len)?;
+    if let Ok(meta) = std::fs::metadata(src) {
+        let _ = std::fs::set_permissions(dst, meta.permissions());
+    }
+    Ok(src_len)
+}
+
+/// Copy only the allocated regions, leaving the source's holes as holes.
+fn copy_data_regions(input: &mut std::fs::File, output: &mut std::fs::File) -> std::io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::os::unix::io::AsRawFd;
+
+    let fd = input.as_raw_fd();
+    let mut buf = vec![0u8; 128 * 1024];
+    let mut offset: u64 = 0;
+
+    loop {
+        let data = match lseek(fd, offset, libc::SEEK_DATA) {
+            Ok(p) => p,
+            // No data at or after `offset`: the rest of the file is a hole.
+            Err(e) if e.raw_os_error() == Some(libc::ENXIO) => break,
+            // The filesystem has no SEEK_DATA/SEEK_HOLE: copy it dense instead.
+            Err(e)
+                if offset == 0
+                    && matches!(e.raw_os_error(), Some(libc::EINVAL) | Some(libc::ENOTSUP)) =>
+            {
+                return std::io::copy(input, output).map(|_| ());
+            }
+            Err(e) => return Err(e),
+        };
+        let hole = lseek(fd, data, libc::SEEK_HOLE)?;
+        input.seek(SeekFrom::Start(data))?;
+        output.seek(SeekFrom::Start(data))?;
+        let mut left = hole - data;
+        while left > 0 {
+            let want = left.min(buf.len() as u64) as usize;
+            let n = input.read(&mut buf[..want])?;
+            if n == 0 {
+                break;
+            }
+            output.write_all(&buf[..n])?;
+            left -= n as u64;
+        }
+        offset = hole;
+    }
+    Ok(())
+}
+
+/// `lseek(2)` returning an absolute offset, so `SEEK_DATA`/`SEEK_HOLE` can drive
+/// the hole-aware copy above.
+fn lseek(fd: i32, offset: u64, whence: i32) -> std::io::Result<u64> {
+    let ret = unsafe { libc::lseek(fd, offset as libc::off_t, whence) };
+    if ret < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(ret as u64)
+}
+
 /// True when the destination already holds this content.
 fn same_content(src: &std::path::Path, dst: &std::path::Path) -> Result<bool> {
     let s = std::fs::symlink_metadata(src)?;
@@ -3298,7 +3379,7 @@ fn sync_one(src: &std::path::Path, dst: &std::path::Path, report: &mut SyncRepor
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::copy(src, &target)?;
+    copy_preserving_holes(src, &target)?;
     std::fs::set_permissions(&target, meta.permissions())?;
     report.copied += 1;
     Ok(())
@@ -3383,7 +3464,7 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
             let _ = std::fs::remove_file(&target);
             std::os::unix::fs::symlink(&link, &target)?;
         } else {
-            std::fs::copy(entry.path(), &target)?;
+            copy_preserving_holes(&entry.path(), &target)?;
         }
     }
 
@@ -3738,6 +3819,51 @@ mod tests {
         assert!(same_content(&root.join("a"), &root.join("b")).unwrap());
         assert!(!same_content(&root.join("a"), &root.join("c")).unwrap());
         assert!(!same_content(&root.join("a"), &root.join("missing")).unwrap());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn copy_keeps_sparse_files_sparse() {
+        use std::io::{Seek, SeekFrom, Write};
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tmp_tree("sparse");
+        let src = root.join("sparse.bin");
+        let dst = root.join("copy.bin");
+
+        // 64 MiB apparent, one 4 KiB page of real data: dense would be ~131072
+        // blocks; the bug made exactly that (issue #18).
+        let f = std::fs::File::create(&src).unwrap();
+        f.set_len(64 * 1024 * 1024).unwrap();
+        drop(f);
+        let mut w = std::fs::OpenOptions::new().write(true).open(&src).unwrap();
+        w.seek(SeekFrom::Start(1024 * 1024)).unwrap();
+        w.write_all(&[0xAB; 4096]).unwrap();
+        drop(w);
+
+        copy_preserving_holes(&src, &dst).unwrap();
+
+        let s = std::fs::metadata(&src).unwrap();
+        let d = std::fs::metadata(&dst).unwrap();
+        assert_eq!(s.len(), d.len(), "apparent size must match");
+        assert_eq!(
+            std::fs::read(&src).unwrap(),
+            std::fs::read(&dst).unwrap(),
+            "content must be byte-identical"
+        );
+
+        // A filesystem with no hole support would densify the source too; there
+        // is nothing to assert there.
+        if s.blocks() * 512 >= 1024 * 1024 {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        assert!(
+            d.blocks() * 512 < 1024 * 1024,
+            "sparse copy allocated {} bytes, expected far less than 1 MiB",
+            d.blocks() * 512
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
