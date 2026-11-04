@@ -1,0 +1,1029 @@
+{
+  "seed": 1793753062,
+  "total_steps": 35,
+  "total_duration_seconds": 5.8,
+  "command_counts": {
+    "build": 3,
+    "login": 5,
+    "list": 2,
+    "run": 7,
+    "ps": 4,
+    "sync": 3,
+    "rename": 3,
+    "copy": 2,
+    "search": 4,
+    "reset": 2
+  },
+  "exit_code_counts": {
+    "0": 23,
+    "1": 8,
+    "42": 2,
+    "2": 2
+  },
+  "anomalies_count": 0,
+  "anomalies": [],
+  "steps": [
+    {
+      "step": 1,
+      "dice": {
+        "d1": 6,
+        "d2": 2
+      },
+      "command": "build",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "build",
+        "artifacts",
+        "build-1"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.022,
+      "stdout_sample": "Build 'build-1' artifacts: (not yet implemented)",
+      "stderr_sample": "",
+      "stdout_full": "Build 'build-1' artifacts: (not yet implemented)\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 2,
+      "dice": {
+        "d1": 6,
+        "d2": 3
+      },
+      "command": "build",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "build",
+        "status",
+        "build-2"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.015,
+      "stdout_sample": "Build 'build-2' status: (not yet implemented)",
+      "stderr_sample": "",
+      "stdout_full": "Build 'build-2' status: (not yet implemented)\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 3,
+      "dice": {
+        "d1": 3,
+        "d2": 6
+      },
+      "command": "login",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "login",
+        "ghost-container-404"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 0.022,
+      "stdout_sample": "",
+      "stderr_sample": "Error: Container 'ghost-container-404' not found",
+      "stdout_full": "",
+      "stderr_full": "Error: Container 'ghost-container-404' not found\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 4,
+      "dice": {
+        "d1": 1,
+        "d2": 2
+      },
+      "command": "list",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "list",
+        "-f",
+        "json"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.018,
+      "stdout_sample": "[",
+      "stderr_sample": "",
+      "stdout_full": "[\n  {\n    \"name\": \"deb-pdn\",\n    \"distro\": \"debian\",\n    \"version\": \"13\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-03T06:36:56.839004868Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/deb-pdn/rootfs\"\n  },\n  {\n    \"name\": \"alpine\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.24.3\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-02T19:13:21.662893675Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/alpine/rootfs\"\n  },\n  {\n    \"name\": \"ubuntu\",\n    \"distro\": \"ubuntu\",\n    \"version\": \"22.04\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-03T22:08:26.995909200Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/ubuntu/rootfs\"\n  },\n  {\n    \"name\": \"test-alpine\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.18.12\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-10-29T22:03:52.365601772Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/test-alpine/rootfs\"\n  },\n  {\n    \"name\": \"deb-renamed\",\n    \"distro\": \"debian\",\n    \"version\": \"13\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-03T06:55:29.911500089Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/deb-renamed/rootfs\"\n  },\n  {\n    \"name\": \"test-pdn-install\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.20.10\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-02T09:06:30.687944813Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/test-pdn-install/rootfs\"\n  },\n  {\n    \"name\": \"pdn-bench\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.24.3\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-02T19:37:52.302784840Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/pdn-bench/rootfs\"\n  },\n  {\n    \"name\": \"fault-box-renamed\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.20.10\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-04T00:37:29.627004733Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/fault-box-renamed/rootfs\"\n  }\n]\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 5,
+      "dice": {
+        "d1": 2,
+        "d2": 6
+      },
+      "command": "run",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "run",
+        "deb-pdn",
+        "-u",
+        "0:0",
+        "--",
+        "uname",
+        "-a"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.077,
+      "stdout_sample": "Linux localhost 6.1.157-android14-11-g78a0a76cd7b7-ab15497637 #1 SMP PREEMPT Tue",
+      "stderr_sample": "",
+      "stdout_full": "Linux localhost 6.1.157-android14-11-g78a0a76cd7b7-ab15497637 #1 SMP PREEMPT Tue May 26 16:06:02 UTC 2026 aarch64 GNU/Linux\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 6,
+      "dice": {
+        "d1": 1,
+        "d2": 6
+      },
+      "command": "ps",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "ps",
+        "-f",
+        "yaml"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.029,
+      "stdout_sample": "[]",
+      "stderr_sample": "",
+      "stdout_full": "[]\n\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 7,
+      "dice": {
+        "d1": 4,
+        "d2": 4
+      },
+      "command": "sync",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "sync",
+        "--delete",
+        "/data/data/com.termux/files/usr/tmp/podnext_monkey_scratch/payload_24_1793753062514724219_dir",
+        "ghost-container-404:/tmp/payload_24_1793753062514724219_dir"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 0.027,
+      "stdout_sample": "",
+      "stderr_sample": "Error: Container 'ghost-container-404' not found",
+      "stdout_full": "",
+      "stderr_full": "Error: Container 'ghost-container-404' not found\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 8,
+      "dice": {
+        "d1": 3,
+        "d2": 5
+      },
+      "command": "login",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "login",
+        "ubuntu"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.11,
+      "stdout_sample": "root",
+      "stderr_sample": "",
+      "stdout_full": "root\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 9,
+      "dice": {
+        "d1": 5,
+        "d2": 2
+      },
+      "command": "rename",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "rename",
+        "deb-renamed",
+        "inv@lid::name!!"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 0.021,
+      "stdout_sample": "",
+      "stderr_sample": "Error: Container name can only contain alphanumeric, hyphen, and underscore",
+      "stdout_full": "",
+      "stderr_full": "Error: Container name can only contain alphanumeric, hyphen, and underscore\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 10,
+      "dice": {
+        "d1": 2,
+        "d2": 6
+      },
+      "command": "run",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "run",
+        "deb-renamed",
+        "--workdir",
+        "/tmp",
+        "--",
+        "cat",
+        "/etc/os-release"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.115,
+      "stdout_sample": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"",
+      "stderr_sample": "",
+      "stdout_full": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 11,
+      "dice": {
+        "d1": 4,
+        "d2": 3
+      },
+      "command": "copy",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "copy",
+        "/data/data/com.termux/files/usr/tmp/podnext_monkey_scratch/payload_41_1793753062896387911_empty.dat",
+        "ubuntu:/tmp/payload_41_1793753062896387911_empty.dat"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.017,
+      "stdout_sample": "Copied /data/data/com.termux/files/usr/tmp/podnext_monkey_scratch/payload_41_179",
+      "stderr_sample": "",
+      "stdout_full": "Copied /data/data/com.termux/files/usr/tmp/podnext_monkey_scratch/payload_41_1793753062896387911_empty.dat -> ubuntu:/tmp/payload_41_1793753062896387911_empty.dat\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 12,
+      "dice": {
+        "d1": 6,
+        "d2": 5
+      },
+      "command": "search",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "search",
+        "nonexistent_image_foo_bar_xyz"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.187,
+      "stdout_sample": "+------+-------------+-------+-------+----------+",
+      "stderr_sample": "",
+      "stdout_full": "+------+-------------+-------+-------+----------+\n| NAME | DESCRIPTION | STARS | PULLS | OFFICIAL |\n+------+-------------+-------+-------+----------+\n\nHint: To install an image, run: podnext install <name>[:tag]\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 13,
+      "dice": {
+        "d1": 2,
+        "d2": 2
+      },
+      "command": "run",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "run",
+        "inv@lid_name#!",
+        "--isolated",
+        "--",
+        "cat",
+        "/etc/os-release"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 0.028,
+      "stdout_sample": "",
+      "stderr_sample": "Error: Container 'inv@lid_name#!' not found",
+      "stdout_full": "",
+      "stderr_full": "Error: Container 'inv@lid_name#!' not found\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 14,
+      "dice": {
+        "d1": 2,
+        "d2": 5
+      },
+      "command": "run",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "run",
+        "deb-renamed",
+        "-u",
+        "0:0",
+        "--",
+        "uname",
+        "-a"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.072,
+      "stdout_sample": "Linux localhost 6.1.157-android14-11-g78a0a76cd7b7-ab15497637 #1 SMP PREEMPT Tue",
+      "stderr_sample": "",
+      "stdout_full": "Linux localhost 6.1.157-android14-11-g78a0a76cd7b7-ab15497637 #1 SMP PREEMPT Tue May 26 16:06:02 UTC 2026 aarch64 GNU/Linux\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 15,
+      "dice": {
+        "d1": 1,
+        "d2": 2
+      },
+      "command": "list",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "list",
+        "-f",
+        "json"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.027,
+      "stdout_sample": "[",
+      "stderr_sample": "",
+      "stdout_full": "[\n  {\n    \"name\": \"test-alpine\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.18.12\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-10-29T22:03:52.365601772Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/test-alpine/rootfs\"\n  },\n  {\n    \"name\": \"fault-box-renamed\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.20.10\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-04T00:37:29.627004733Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/fault-box-renamed/rootfs\"\n  },\n  {\n    \"name\": \"ubuntu\",\n    \"distro\": \"ubuntu\",\n    \"version\": \"22.04\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-03T22:08:26.995909200Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/ubuntu/rootfs\"\n  },\n  {\n    \"name\": \"pdn-bench\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.24.3\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-02T19:37:52.302784840Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/pdn-bench/rootfs\"\n  },\n  {\n    \"name\": \"deb-renamed\",\n    \"distro\": \"debian\",\n    \"version\": \"13\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-03T06:55:29.911500089Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/deb-renamed/rootfs\"\n  },\n  {\n    \"name\": \"deb-pdn\",\n    \"distro\": \"debian\",\n    \"version\": \"13\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-03T06:36:56.839004868Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/deb-pdn/rootfs\"\n  },\n  {\n    \"name\": \"alpine\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.24.3\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-02T19:13:21.662893675Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/alpine/rootfs\"\n  },\n  {\n    \"name\": \"test-pdn-install\",\n    \"distro\": \"alpine\",\n    \"version\": \"3.20.10\",\n    \"arch\": \"aarch64\",\n    \"status\": \"Stopped\",\n    \"created_at\": \"2026-11-02T09:06:30.687944813Z\",\n    \"rootfs_path\": \"/data/data/com.termux/files/home/.podnext/containers/test-pdn-install/rootfs\"\n  }\n]\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 16,
+      "dice": {
+        "d1": 3,
+        "d2": 3
+      },
+      "command": "login",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "login",
+        "ghost-container-404",
+        "--",
+        "/bin/sh",
+        "-c",
+        "echo login_exec_mode"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 0.028,
+      "stdout_sample": "",
+      "stderr_sample": "Error: Container 'ghost-container-404' not found",
+      "stdout_full": "",
+      "stderr_full": "Error: Container 'ghost-container-404' not found\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 17,
+      "dice": {
+        "d1": 4,
+        "d2": 6
+      },
+      "command": "sync",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "sync",
+        "deb-pdn:/etc",
+        "/data/data/com.termux/files/usr/tmp/podnext_monkey_scratch/sync_out_17"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.107,
+      "stdout_sample": "Synced deb-pdn:/etc -> /data/data/com.termux/files/usr/tmp/podnext_monkey_scratc",
+      "stderr_sample": "",
+      "stdout_full": "Synced deb-pdn:/etc -> /data/data/com.termux/files/usr/tmp/podnext_monkey_scratch/sync_out_17: 120 copied, 0 unchanged, 0 removed, 0 skipped\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 18,
+      "dice": {
+        "d1": 2,
+        "d2": 4
+      },
+      "command": "run",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "run",
+        "deb-renamed",
+        "--workdir",
+        "/tmp",
+        "--",
+        "/bin/sh",
+        "-c",
+        "exit 42"
+      ],
+      "exit_code": 42,
+      "duration_seconds": 0.082,
+      "stdout_sample": "",
+      "stderr_sample": "",
+      "stdout_full": "",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 19,
+      "dice": {
+        "d1": 3,
+        "d2": 3
+      },
+      "command": "login",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "login",
+        "alpine"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.081,
+      "stdout_sample": "monkey_login_stdin",
+      "stderr_sample": "",
+      "stdout_full": "monkey_login_stdin\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 20,
+      "dice": {
+        "d1": 1,
+        "d2": 6
+      },
+      "command": "ps",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "ps"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.022,
+      "stdout_sample": "+----+-----------+------+---------+-----+-----+--------+---------+---------+",
+      "stderr_sample": "",
+      "stdout_full": "+----+-----------+------+---------+-----+-----+--------+---------+---------+\n| ID | CONTAINER | USER | COMMAND | CWD | PID | STATUS | CREATED | STARTED |\n+----+-----------+------+---------+-----+-----+--------+---------+---------+\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 21,
+      "dice": {
+        "d1": 5,
+        "d2": 2
+      },
+      "command": "rename",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "rename",
+        "deb-renamed",
+        "inv@lid::name!!"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 0.024,
+      "stdout_sample": "",
+      "stderr_sample": "Error: Container name can only contain alphanumeric, hyphen, and underscore",
+      "stdout_full": "",
+      "stderr_full": "Error: Container name can only contain alphanumeric, hyphen, and underscore\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 22,
+      "dice": {
+        "d1": 4,
+        "d2": 6
+      },
+      "command": "sync",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "sync",
+        "--delete",
+        "/data/data/com.termux/files/usr/tmp/podnext_monkey_scratch/payload_86_1793753064908353450_empty.dat",
+        "ubuntu:/tmp/payload_86_1793753064908353450_empty.dat"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 0.034,
+      "stdout_sample": "",
+      "stderr_sample": "Error: --delete requires a directory as the source",
+      "stdout_full": "",
+      "stderr_full": "Error: --delete requires a directory as the source\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 23,
+      "dice": {
+        "d1": 5,
+        "d2": 5
+      },
+      "command": "reset",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "reset",
+        "--unknown-monkey-flag"
+      ],
+      "exit_code": 2,
+      "duration_seconds": 0.031,
+      "stdout_sample": "",
+      "stderr_sample": "error: unexpected argument '--unknown-monkey-flag' found",
+      "stdout_full": "",
+      "stderr_full": "error: unexpected argument '--unknown-monkey-flag' found\n\n  tip: to pass '--unknown-monkey-flag' as a value, use '-- --unknown-monkey-flag'\n\nUsage: podnext reset [OPTIONS] <NAME>\n\nFor more information, try '--help'.\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 24,
+      "dice": {
+        "d1": 2,
+        "d2": 1
+      },
+      "command": "run",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "run",
+        "deb-pdn",
+        "--workdir",
+        "/tmp",
+        "--",
+        "/bin/sh",
+        "-c",
+        "exit 42"
+      ],
+      "exit_code": 42,
+      "duration_seconds": 0.089,
+      "stdout_sample": "",
+      "stderr_sample": "",
+      "stdout_full": "",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 25,
+      "dice": {
+        "d1": 6,
+        "d2": 6
+      },
+      "command": "search",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "search",
+        "nonexistent_image_foo_bar_xyz"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.948,
+      "stdout_sample": "+------+-------------+-------+-------+----------+",
+      "stderr_sample": "",
+      "stdout_full": "+------+-------------+-------+-------+----------+\n| NAME | DESCRIPTION | STARS | PULLS | OFFICIAL |\n+------+-------------+-------+-------+----------+\n\nHint: To install an image, run: podnext install <name>[:tag]\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 26,
+      "dice": {
+        "d1": 3,
+        "d2": 1
+      },
+      "command": "login",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "login",
+        "ubuntu"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.082,
+      "stdout_sample": "root",
+      "stderr_sample": "",
+      "stdout_full": "root\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 27,
+      "dice": {
+        "d1": 6,
+        "d2": 5
+      },
+      "command": "search",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "search",
+        "alpine",
+        "--limit",
+        "3"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.165,
+      "stdout_sample": "+--------------+-----------------------------------------------------+-------+--",
+      "stderr_sample": "",
+      "stdout_full": "+--------------+-----------------------------------------------------+-------+-------------+----------+\n| NAME         | DESCRIPTION                                         | STARS | PULLS       | OFFICIAL |\n+--------------+-----------------------------------------------------+-------+-------------+----------+\n| alpine       | A minimal Docker image based on Alpine Linux wit... | 11579 | 12446992049 | [OK]     |\n+--------------+-----------------------------------------------------+-------+-------------+----------+\n| alpine/git   | A  simple git container running in alpine linux,... | 252   | 519546202   |          |\n+--------------+-----------------------------------------------------+-------+-------------+----------+\n| alpine/socat | Run socat command in alpine container               | 120   | 91039320    |          |\n+--------------+-----------------------------------------------------+-------+-------------+----------+\n\nHint: To install an image, run: podnext install <name>[:tag]\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 28,
+      "dice": {
+        "d1": 2,
+        "d2": 1
+      },
+      "command": "run",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "run",
+        "deb-pdn",
+        "--isolated",
+        "--",
+        "uname",
+        "-a"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.078,
+      "stdout_sample": "Linux localhost 6.1.157-android14-11-g78a0a76cd7b7-ab15497637 #1 SMP PREEMPT Tue",
+      "stderr_sample": "",
+      "stdout_full": "Linux localhost 6.1.157-android14-11-g78a0a76cd7b7-ab15497637 #1 SMP PREEMPT Tue May 26 16:06:02 UTC 2026 aarch64 GNU/Linux\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 29,
+      "dice": {
+        "d1": 6,
+        "d2": 4
+      },
+      "command": "search",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "search",
+        "--format",
+        "yaml"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.022,
+      "stdout_sample": "- name: debian",
+      "stderr_sample": "",
+      "stdout_full": "- name: debian\n  tag: 13 (trixie) / 12 (bookworm)\n  description: Stable, lightweight, vast apt package ecosystem\n  install_cmd: podnext install debian:13\n- name: ubuntu\n  tag: 24.04 (noble) / 22.04 (jammy)\n  description: Standard LTS Linux development environment\n  install_cmd: podnext install ubuntu:22.04\n- name: alpine\n  tag: latest / 3.20\n  description: Ultra-small ~5MB musl/busybox base\n  install_cmd: podnext install alpine:latest\n- name: archlinux\n  tag: latest\n  description: Rolling-release Arch Linux with pacman\n  install_cmd: podnext install archlinux:latest\n- name: fedora\n  tag: '40'\n  description: Modern RPM-based Fedora workstation\n  install_cmd: podnext install fedora:40\n- name: rockylinux\n  tag: '9'\n  description: Enterprise RHEL binary-compatible distro\n  install_cmd: podnext install rockylinux:9\n- name: almalinux\n  tag: '9'\n  description: Enterprise Linux 1:1 RHEL compatible\n  install_cmd: podnext install almalinux:9\n- name: voidlinux\n  tag: latest\n  description: Independent distro with xbps package manager\n  install_cmd: podnext install voidlinux/voidlinux:latest\n- name: kali-rolling\n  tag: latest\n  description: Penetration testing & forensics tools platform\n  install_cmd: podnext install kalilinux/kali-rolling:latest\n\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 30,
+      "dice": {
+        "d1": 6,
+        "d2": 1
+      },
+      "command": "build",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "build",
+        "local",
+        "/nonexistent-dockerfile-dir"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 0.027,
+      "stdout_sample": "",
+      "stderr_sample": "Error: Dockerfile not found at '/nonexistent-dockerfile-dir/Dockerfile'",
+      "stdout_full": "",
+      "stderr_full": "Error: Dockerfile not found at '/nonexistent-dockerfile-dir/Dockerfile'\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 31,
+      "dice": {
+        "d1": 5,
+        "d2": 4
+      },
+      "command": "reset",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "reset",
+        "--isolated",
+        "ghost_box"
+      ],
+      "exit_code": 2,
+      "duration_seconds": 0.031,
+      "stdout_sample": "",
+      "stderr_sample": "error: unexpected argument '--isolated' found",
+      "stdout_full": "",
+      "stderr_full": "error: unexpected argument '--isolated' found\n\n  tip: to pass '--isolated' as a value, use '-- --isolated'\n\nUsage: podnext reset [OPTIONS] <NAME>\n\nFor more information, try '--help'.\n",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 32,
+      "dice": {
+        "d1": 1,
+        "d2": 6
+      },
+      "command": "ps",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "ps",
+        "--no-sysvipc"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.029,
+      "stdout_sample": "+----+-----------+------+---------+-----+-----+--------+---------+---------+",
+      "stderr_sample": "",
+      "stdout_full": "+----+-----------+------+---------+-----+-----+--------+---------+---------+\n| ID | CONTAINER | USER | COMMAND | CWD | PID | STATUS | CREATED | STARTED |\n+----+-----------+------+---------+-----+-----+--------+---------+---------+\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 33,
+      "dice": {
+        "d1": 1,
+        "d2": 6
+      },
+      "command": "ps",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "ps"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.017,
+      "stdout_sample": "+----+-----------+------+---------+-----+-----+--------+---------+---------+",
+      "stderr_sample": "",
+      "stdout_full": "+----+-----------+------+---------+-----+-----+--------+---------+---------+\n| ID | CONTAINER | USER | COMMAND | CWD | PID | STATUS | CREATED | STARTED |\n+----+-----------+------+---------+-----+-----+--------+---------+---------+\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 34,
+      "dice": {
+        "d1": 4,
+        "d2": 2
+      },
+      "command": "copy",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "copy",
+        "deb-renamed:/etc/hosts",
+        "/data/data/com.termux/files/usr/tmp/podnext_monkey_scratch/fetched_payload_129_1793753067801125758.txt"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.032,
+      "stdout_sample": "Copied deb-renamed:/etc/hosts -> /data/data/com.termux/files/usr/tmp/podnext_mon",
+      "stderr_sample": "",
+      "stdout_full": "Copied deb-renamed:/etc/hosts -> /data/data/com.termux/files/usr/tmp/podnext_monkey_scratch/fetched_payload_129_1793753067801125758.txt\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    },
+    {
+      "step": 35,
+      "dice": {
+        "d1": 5,
+        "d2": 1
+      },
+      "command": "rename",
+      "cmdline": [
+        "/data/data/com.termux/files/usr/bin/podnext",
+        "rename",
+        "deb-renamed",
+        "deb-renamed-tmp"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.09,
+      "stdout_sample": "Renamed container 'deb-renamed' to 'deb-renamed-tmp'",
+      "stderr_sample": "",
+      "stdout_full": "Renamed container 'deb-renamed' to 'deb-renamed-tmp'\n",
+      "stderr_full": "",
+      "invariants": {
+        "crashed": false,
+        "crash_detail": null,
+        "leftover_locks": [],
+        "stale_sessions": [],
+        "state_desynced": false,
+        "desync_detail": null
+      }
+    }
+  ]
+}

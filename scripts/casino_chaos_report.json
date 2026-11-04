@@ -1,0 +1,1214 @@
+{
+  "timestamp": "2026-11-04T00:49:23Z",
+  "phase1_chaotic_interleaving": {
+    "total_rounds": 12,
+    "anomalies_count": 12,
+    "anomalies": [
+      {
+        "round": 1,
+        "anomalies": [
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_1.txt"
+            ],
+            "exit_code": 0,
+            "stdout": "Copied test-alpine:/etc/alpine-release -> /data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_1.txt",
+            "stderr": "",
+            "duration_ms": 25.47,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.0045451440263655244
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 34.25,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.017063905952718592
+          },
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_1.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 41.87,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.01633887102322666
+          },
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_1' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 43.0,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.016655971650115203
+          },
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd1"
+            ],
+            "exit_code": 0,
+            "stdout": "Renamed container 'test-alpine' to 'test-alpine-rnd1'",
+            "stderr": "",
+            "duration_ms": 87.62,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.007687992467271084
+          }
+        }
+      },
+      {
+        "round": 2,
+        "anomalies": [
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_2' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 54.01,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.00516741966496847
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_2.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 51.5,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.014593201036127136
+          },
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd2"
+            ],
+            "exit_code": 0,
+            "stdout": "Renamed container 'test-alpine' to 'test-alpine-rnd2'",
+            "stderr": "",
+            "duration_ms": 69.04,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.005618360375786578
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 55.37,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.015882309794702256
+          },
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_2.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 76.44,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.007793265514442669
+          }
+        }
+      },
+      {
+        "round": 3,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in run_write: exit 1, stderr='Error: No such file or directory (os error 2)'",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_3' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: No such file or directory (os error 2)",
+            "duration_ms": 26.29,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.014036747131390515
+          },
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_3.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 16.08,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.02292636635713394
+          },
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd3"
+            ],
+            "exit_code": 0,
+            "stdout": "Renamed container 'test-alpine' to 'test-alpine-rnd3'",
+            "stderr": "",
+            "duration_ms": 25.41,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.01833150393419587
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_3.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 23.85,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.02033574568728642
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 27.51,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.024715717879681735
+          }
+        }
+      },
+      {
+        "round": 4,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in rename_toggle: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd4"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 27.98,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.012170408979995728
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 32.19,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.010178307759340817
+          },
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_4' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 39.92,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.0032534523883603335
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_4.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 36.21,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.008426078424190502
+          },
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_4.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 26.34,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.0246272907488793
+          }
+        }
+      },
+      {
+        "round": 5,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in rename_toggle: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_5.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 20.6,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.005517354694689365
+          },
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd5"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 31.73,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.001451124327307758
+          },
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_5' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 31.44,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.0029276728625067037
+          },
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_5.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 33.59,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.004377511610023253
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 28.05,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.014462740884244527
+          }
+        }
+      },
+      {
+        "round": 6,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in rename_toggle: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_6.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 22.26,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.0037784354149319956
+          },
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_6' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 19.23,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.014928316252199834
+          },
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd6"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 24.95,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.01440719102412322
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_6.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 15.76,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.024527827696806687
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 25.72,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.019514151914871714
+          }
+        }
+      },
+      {
+        "round": 7,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in rename_toggle: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_7.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 27.13,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.003998891607698786
+          },
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_7' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 26.08,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.013498955043013315
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_7.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 31.37,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.014572029492908742
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 30.36,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.016254287793651567
+          },
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd7"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 28.96,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.020250609065088847
+          }
+        }
+      },
+      {
+        "round": 8,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in rename_toggle: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd8"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 23.44,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.010171328966775924
+          },
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_8.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 17.11,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.022628152732413524
+          },
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_8' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 31.21,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.014635853231742865
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 39.96,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.014970474157861915
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_8.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 36.07,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.01988437228180448
+          }
+        }
+      },
+      {
+        "round": 9,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in rename_toggle: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd9"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 21.91,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.0062027627385164855
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_9.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 23.64,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.008819247520014104
+          },
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_9.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 26.71,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.013313914144964124
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 31.16,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.016180185466616055
+          },
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_9' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 29.12,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.018158101677577976
+          }
+        }
+      },
+      {
+        "round": 10,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in rename_toggle: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_10.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 27.71,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.001916209638296965
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_10.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 25.96,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.0017347401801127366
+          },
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd10"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 29.74,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.005113362292444742
+          },
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_10' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 25.74,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.014804167083225558
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 27.6,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.022052774829101663
+          }
+        }
+      },
+      {
+        "round": 11,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in rename_toggle: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_11' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 31.58,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.009625291179225306
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 34.27,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.011534872777856506
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_11.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 37.49,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.00606544709184253
+          },
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd11"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 44.44,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.009531194924928061
+          },
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_11.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 50.46,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.004610888468687999
+          }
+        }
+      },
+      {
+        "round": 12,
+        "anomalies": [
+          "Metadata corrupted/missing: metadata.json missing",
+          "Collision in rename_toggle: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in run_write: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_out: exit 1, stderr='Error: Container 'test-alpine' not found'",
+          "Collision in copy_in: exit 1, stderr='Error: Container 'test-alpine' not found'"
+        ],
+        "task_results": {
+          "rename_toggle": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "rename",
+              "test-alpine",
+              "test-alpine-rnd12"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 30.73,
+            "timed_out": false,
+            "label": "rename_toggle",
+            "delay_s": 0.0024540501838986044
+          },
+          "kill_probe": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "kill",
+              "test-alpine"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 26.63,
+            "timed_out": false,
+            "label": "kill_probe",
+            "delay_s": 0.008229854013836167
+          },
+          "run_write": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "run",
+              "test-alpine",
+              "--",
+              "sh",
+              "-c",
+              "echo 'rnd_12' > /tmp/rnd_token && sleep 0.05 && cat /tmp/rnd_token"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 29.6,
+            "timed_out": false,
+            "label": "run_write",
+            "delay_s": 0.005651566004084517
+          },
+          "copy_out": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "test-alpine:/etc/alpine-release",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/release_12.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 30.67,
+            "timed_out": false,
+            "label": "copy_out",
+            "delay_s": 0.01402699967677241
+          },
+          "copy_in": {
+            "cmd": [
+              "/data/data/com.termux/files/usr/bin/podnext",
+              "copy",
+              "/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos/host_token.txt",
+              "test-alpine:/tmp/host_copy_12.txt"
+            ],
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Error: Container 'test-alpine' not found",
+            "duration_ms": 29.7,
+            "timed_out": false,
+            "label": "copy_in",
+            "delay_s": 0.024918528844885126
+          }
+        }
+      }
+    ],
+    "round_samples": [
+      {
+        "round": 1,
+        "duration_ms": 138.66,
+        "meta_valid": true,
+        "task_exits": {
+          "copy_out": 0,
+          "kill_probe": 0,
+          "copy_in": 1,
+          "run_write": 1,
+          "rename_toggle": 0
+        }
+      },
+      {
+        "round": 2,
+        "duration_ms": 118.93,
+        "meta_valid": true,
+        "task_exits": {
+          "run_write": 1,
+          "copy_out": 1,
+          "rename_toggle": 0,
+          "kill_probe": 0,
+          "copy_in": 1
+        }
+      },
+      {
+        "round": 3,
+        "duration_ms": 93.59,
+        "meta_valid": false,
+        "task_exits": {
+          "run_write": 1,
+          "copy_in": 1,
+          "rename_toggle": 0,
+          "copy_out": 1,
+          "kill_probe": 0
+        }
+      },
+      {
+        "round": 4,
+        "duration_ms": 57.33,
+        "meta_valid": false,
+        "task_exits": {
+          "rename_toggle": 1,
+          "kill_probe": 0,
+          "run_write": 1,
+          "copy_out": 1,
+          "copy_in": 1
+        }
+      },
+      {
+        "round": 5,
+        "duration_ms": 48.29,
+        "meta_valid": false,
+        "task_exits": {
+          "copy_out": 1,
+          "rename_toggle": 1,
+          "run_write": 1,
+          "copy_in": 1,
+          "kill_probe": 0
+        }
+      }
+    ]
+  },
+  "phase2_lock_mechanisms": {
+    "phantom_lock_findings": {
+      "pn_next_lock_path": "/data/data/com.termux/files/home/.pn-next/locks/test-alpine.lock",
+      "podnext_lock_path": "/data/data/com.termux/files/home/.podnext/locks/test-alpine.lock",
+      "run_bypassed_flock": false,
+      "rename_bypassed_flock": false,
+      "conclusion": "CLI commands bypass ContainerLock flock entirely. ContainerLock is dead/unwired code in the CLI."
+    },
+    "flock_simulation_contention": {
+      "total_threads": 30,
+      "acquired_count": 1,
+      "rejected_ewouldblock": 29,
+      "avg_latency_us": 3372.3
+    }
+  },
+  "phase3_ps_burst_queries": {
+    "total_queries": 60,
+    "failed_queries_count": 0,
+    "json_empty_table_inconsistency": 30,
+    "avg_duration_ms": 95.19,
+    "max_duration_ms": 136.15,
+    "waves": [
+      {
+        "wave": 1,
+        "duration_ms": 169.87
+      },
+      {
+        "wave": 2,
+        "duration_ms": 133.07
+      },
+      {
+        "wave": 3,
+        "duration_ms": 147.56
+      }
+    ],
+    "bg_session_errors_count": 9
+  },
+  "phase4_exit_codes_and_states": {
+    "scenarios": [
+      {
+        "scenario": "guest exit 0",
+        "expected": 0,
+        "actual": 1,
+        "match": false
+      },
+      {
+        "scenario": "guest exit 42",
+        "expected": 42,
+        "actual": 1,
+        "match": false
+      },
+      {
+        "scenario": "guest command not found (127)",
+        "expected": 127,
+        "actual": 1,
+        "match": true
+      },
+      {
+        "scenario": "concurrent duplicate rename collision",
+        "expected": "one 0, one non-zero",
+        "actual": "exits: r1=1, r2=1",
+        "match": false,
+        "detail": {
+          "r1_err": "Error: Container 'test-alpine' not found",
+          "r2_err": "Error: Container 'test-alpine' not found"
+        }
+      },
+      {
+        "scenario": "kill stopped container",
+        "expected": 0,
+        "actual": 0,
+        "match": true
+      },
+      {
+        "scenario": "kill nonexistent container",
+        "expected": 0,
+        "actual": 0,
+        "match": true
+      }
+    ]
+  }
+}
