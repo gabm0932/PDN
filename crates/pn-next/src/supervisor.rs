@@ -957,7 +957,7 @@ impl ServiceSupervisor {
                             if let Some(managed) = services_guard.get_mut(&name) {
                                 pn_trace!("DEBUG supervision_loop: name={}, state={:?}, process={:?}", name, managed.status.state, managed.process.is_some());
                                 // Handle services that should be running but have no process (e.g., Restarting/Starting state)
-                                if managed.process.is_none() && matches!(managed.status.state, ServiceState::Restarting | ServiceState::Starting) {
+                                if managed.process.is_none() && !managed.user_stopped && matches!(managed.status.state, ServiceState::Restarting | ServiceState::Starting) {
                                     // Only restart if this is a genuine restart (has been restarted before) or explicitly marked for restart
                                     // Skip initial startup - services in Starting state with no restarts yet are just starting for the first time
                                     let is_initial_start = managed.status.state == ServiceState::Starting && managed.status.total_restarts == 0 && managed.status.last_restart_at.is_none();
@@ -1036,7 +1036,11 @@ impl ServiceSupervisor {
                                         Ok(Some(status)) => {
                                             let exit_code = status.code();
                                             managed.status.exit_code = exit_code;
-                                            managed.status.state = if exit_code == Some(0) {
+                                            // A process that exited after an explicit user stop is
+                                            // Stopped, not Failed: the stop is authoritative, the exit
+                                            // code is incidental.
+                                            let user_stopped = managed.user_stopped;
+                                            managed.status.state = if user_stopped || exit_code == Some(0) {
                                                 ServiceState::Stopped
                                             } else {
                                                 ServiceState::Failed
@@ -1079,7 +1083,9 @@ impl ServiceSupervisor {
                                                         error!("Circuit breaker open for service {}, skipping restart", name_clone);
                                                         let mut services = services_for_restart.write().await;
                                                         if let Some(managed) = services.get_mut(&name_clone) {
-                                                            managed.status.state = ServiceState::Failed;
+                                                            if !managed.user_stopped {
+                                                                managed.status.state = ServiceState::Failed;
+                                                            }
                                                         }
                                                         let _ = event_tx_clone.send(SupervisorEvent::ServiceFailed {
                                                             name: name_clone.clone(),
@@ -1115,7 +1121,9 @@ impl ServiceSupervisor {
                                                         );
                                                         let mut services = services_for_restart.write().await;
                                                         if let Some(managed) = services.get_mut(&name_clone) {
-                                                            managed.status.state = ServiceState::Failed;
+                                                            if !managed.user_stopped {
+                                                                managed.status.state = ServiceState::Failed;
+                                                            }
                                                         }
                                                         let _ = event_tx_clone.send(SupervisorEvent::ServiceFailed {
                                                             name: name_clone.clone(),
@@ -1139,6 +1147,17 @@ impl ServiceSupervisor {
                                                     {
                                                         let mut services = services_for_restart.write().await;
                                                         if let Some(managed) = services.get_mut(&name_clone) {
+                                                            // An explicit user stop pre-empts this in-flight
+                                                            // restart decision: never resurrect a service the
+                                                            // operator has stopped.
+                                                            if managed.user_stopped
+                                                                || matches!(
+                                                                    managed.status.state,
+                                                                    ServiceState::Stopping | ServiceState::Stopped
+                                                                )
+                                                            {
+                                                                return;
+                                                            }
                                                             managed.status.restart_count = recent_restarts;
                                                             managed.status.total_restarts += 1;
                                                             managed.status.last_restart_at = Some(Utc::now());
@@ -1414,7 +1433,9 @@ impl ServiceSupervisor {
             );
             let mut services = self.services.write().await;
             if let Some(managed) = services.get_mut(&name) {
-                managed.status.state = ServiceState::Failed;
+                if !managed.user_stopped {
+                    managed.status.state = ServiceState::Failed;
+                }
             }
             let _ = event_tx.send(SupervisorEvent::ServiceFailed {
                 name: name.clone(),
@@ -1440,6 +1461,15 @@ impl ServiceSupervisor {
         {
             let mut services = self.services.write().await;
             if let Some(managed) = services.get_mut(&name) {
+                // An explicit user stop pre-empts this restart decision.
+                if managed.user_stopped
+                    || matches!(
+                        managed.status.state,
+                        ServiceState::Stopping | ServiceState::Stopped
+                    )
+                {
+                    return Ok(());
+                }
                 managed.status.restart_count = recent_restarts;
                 managed.status.total_restarts += 1;
                 managed.status.last_restart_at = Some(Utc::now());
@@ -1455,6 +1485,17 @@ impl ServiceSupervisor {
 
         // Wait for delay
         tokio::time::sleep(Duration::from_secs(delay)).await;
+
+        // Re-check: a user stop during the backoff must cancel the restart.
+        if self
+            .services
+            .read()
+            .await
+            .get(&name)
+            .map_or(false, |m| m.user_stopped)
+        {
+            return Ok(());
+        }
 
         // Actually restart by calling the instance method
         let _ = self.start_service(&name).await?;
