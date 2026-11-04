@@ -11,6 +11,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   packages: write
@@ -28,10 +32,10 @@ jobs:
     strategy:
       matrix:
         rust: [stable]
-        target: [aarch64-linux-android, x86_64-linux-android]
+        target: [aarch64-linux-android, x86_64-linux-android, x86_64-unknown-linux-gnu]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -42,11 +46,13 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install Android NDK
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27c
 
       - name: Find Android NDK Path
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
         run: |
           # Find the actual NDK path
           # nttld/setup-ndk installs at /opt/hostedtoolcache/ndk/r27c
@@ -119,13 +125,19 @@ jobs:
           echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Verify NDK Path
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
         run: |
+          # Fail loudly if NDK discovery did not populate the env var; an empty
+          # ANDROID_NDK_HOME previously expanded to a bare "/toolchains/llvm/..."
+          # path (run 41208989281: cc-rs "failed to find tool ...").
+          : "${ANDROID_NDK_HOME:?ANDROID_NDK_HOME is empty - NDK discovery failed; refusing to derive toolchain paths}"
+          test -d "$ANDROID_NDK_HOME" || { echo "ERROR: ANDROID_NDK_HOME=$ANDROID_NDK_HOME does not exist"; exit 1; }
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           ls -la "$ANDROID_NDK_HOME"
           ls -la "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/"
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -149,6 +161,7 @@ jobs:
             protobuf-compiler
 
       - name: Install Android OpenSSL
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
         run: |
           # Install OpenSSL for Android targets
           mkdir -p /tmp/openssl-android
@@ -176,7 +189,19 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
 
       - name: Build workspace
-        run: cargo build --workspace --release --target ${{ matrix.target }}
+        run: |
+          set -eu
+          case "${{ matrix.target }}" in
+            *-linux-android)
+              # Refuse to build with a derived toolchain path when the NDK env var
+              # is empty (root cause of run 41208989281).
+              if [ -z "${ANDROID_NDK_HOME:-}" ]; then
+                echo "ERROR: ANDROID_NDK_HOME is empty; refusing to construct NDK toolchain paths" >&2
+                exit 1
+              fi
+              ;;
+          esac
+          cargo build --workspace --release --locked --target ${{ matrix.target }}
         env:
           CC_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang
           CXX_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++
@@ -189,7 +214,7 @@ jobs:
 
       - name: Run tests
         if: matrix.target != 'aarch64-linux-android' && matrix.target != 'x86_64-linux-android'
-        run: cargo test --workspace --release --target ${{ matrix.target }}
+        run: cargo test --workspace --release --locked --target ${{ matrix.target }}
         env:
           CC_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang
           CXX_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++
@@ -202,7 +227,7 @@ jobs:
 
       - name: Run clippy
         if: matrix.target != 'aarch64-linux-android' && matrix.target != 'x86_64-linux-android'
-        run: cargo clippy --workspace --release --target ${{ matrix.target }} || true
+        run: cargo clippy --workspace --release --locked --target ${{ matrix.target }}
         env:
           CC_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang
           CXX_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++
@@ -215,7 +240,7 @@ jobs:
 
       - name: Check formatting
         if: matrix.target != 'aarch64-linux-android' && matrix.target != 'x86_64-linux-android'
-        run: cargo fmt --all --check || true
+        run: cargo fmt --all --check
 
       - name: Build binaries for release
         if: matrix.target == 'aarch64-linux-android' || matrix.target == 'x86_64-linux-android'
@@ -229,7 +254,7 @@ jobs:
 
       - name: Upload release artifacts
         if: matrix.target == 'aarch64-linux-android' || matrix.target == 'x86_64-linux-android'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-binaries-${{ matrix.target }}
           path: release-artifacts/
@@ -241,7 +266,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust (security)
         uses: dtolnay/rust-toolchain@stable
@@ -249,16 +274,18 @@ jobs:
           targets: aarch64-linux-android, x86_64-linux-android
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install cargo-audit --locked
 
       - name: Run cargo-audit
-        run: cargo audit --workspace || true
+        run: cargo audit
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny
+        run: cargo install cargo-deny --locked
 
       - name: Run cargo-deny check
-        run: cargo deny check advisories bans licenses sources || true
+        run: |
+          test -f deny.toml || { echo "ERROR: deny.toml is missing from the repo root; refusing to run a vacuous cargo-deny check"; exit 1; }
+          cargo deny check advisories bans licenses sources
 
   # Generate release notes and create release
   create-release:
@@ -268,7 +295,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -278,16 +305,16 @@ jobs:
           targets: aarch64-linux-android, x86_64-linux-android
 
       - name: Install cargo-release
-        run: cargo install cargo-release
+        run: cargo install cargo-release --locked
 
       - name: Download release artifacts (aarch64)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-binaries-aarch64-linux-android
           path: release-artifacts-aarch64
 
       - name: Download release artifacts (x86_64)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-binaries-x86_64-linux-android
           path: release-artifacts-x86_64
@@ -320,7 +347,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.changelog.outputs.version }}
           name: PDN ${{ steps.changelog.outputs.version }}
@@ -366,7 +393,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -376,7 +403,7 @@ jobs:
           targets: aarch64-linux-android, x86_64-linux-android
 
       - name: Install cargo-release
-        run: cargo install cargo-release
+        run: cargo install cargo-release --locked
 
       - name: Configure git
         run: |

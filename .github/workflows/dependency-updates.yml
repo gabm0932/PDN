@@ -15,6 +15,10 @@ on:
           - github-actions
           - security-only
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust-dependencies:
     name: Update Rust Dependencies
@@ -23,7 +27,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -31,7 +35,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -43,7 +47,7 @@ jobs:
 
       - name: Check for outdated dependencies
         run: |
-          cargo install cargo-outdated
+          cargo install cargo-outdated --locked
           cargo outdated --workspace --exit-code 1 || true
 
       - name: Update dependencies
@@ -51,16 +55,16 @@ jobs:
           cargo update --workspace
 
       - name: Run tests
-        run: cargo test --workspace --release
+        run: cargo test --workspace --release --locked
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings || true
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings || true
 
       - name: Check formatting
         run: cargo fmt --all --check
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore(deps): update Rust dependencies"
@@ -71,29 +75,78 @@ jobs:
             This PR updates Rust dependencies to their latest compatible versions.
             Please review the changes and ensure all tests pass.
           branch: chore/update-rust-dependencies
-          base: main
+          base: master
           labels: dependencies,rust,cargo
           draft: false
 
   github-actions-dependencies:
-    name: Update GitHub Actions Dependencies
+    name: Audit GitHub Actions Pins
     runs-on: ubuntu-latest
     if: github.event.inputs.dependency-type == 'all' || github.event.inputs.dependency-type == 'github-actions'
     timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Update GitHub Actions
-        uses: peter-evans/update-github-actions@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore(deps): update GitHub Actions"
-          title: "chore(deps): update GitHub Actions"
-          body: |
-            Automated GitHub Actions dependency updates.
-          branch: chore/update-github-actions
-          labels: dependencies,github-actions
+      # This job used to call `peter-evans/update-github-actions@v1`, which does
+      # not exist (the repository 404s), so the job could never have worked — it
+      # was simply never reached because the schedule skips it. Rather than swap
+      # in another third-party updater, audit the pins directly: report how far
+      # each one is behind, and FAIL when a pin cannot be resolved at all, so a
+      # nonexistent action is caught here instead of silently breaking whichever
+      # job references it.
+      - name: Audit GitHub Actions pins
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pins=$(grep -rhoE 'uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[^ ]+' .github/workflows/*.yml \
+                 | sed 's/^uses: //' | sort -u)
+
+          {
+            echo "## GitHub Actions pins"
+            echo
+            echo "| action | pinned | latest release | status |"
+            echo "|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          unresolved=0
+          while IFS= read -r pin; do
+            [ -n "$pin" ] || continue
+            repo="${pin%@*}"
+            used="${pin#*@}"
+            # Test the EXIT STATUS, not the output: `gh api` prints its error
+            # body on stdout, so a `-z "$out"` check silently treats a 404 as a
+            # resolved version. Fall back to the tag list for actions that
+            # publish no releases (branch-ref pins, tag-only repos).
+            latest=""
+            if latest=$(gh api "repos/${repo}/releases/latest" --jq .tag_name 2>/dev/null); then
+              :
+            elif latest=$(gh api "repos/${repo}/tags" --jq '.[0].name' 2>/dev/null); then
+              latest="${latest} (tag)"
+            else
+              status="UNRESOLVABLE"
+              latest="-"
+              unresolved=$((unresolved + 1))
+            fi
+            if [ -z "$status" ]; then
+              if [ "${used#v}" = "${latest% *}" ] || [ "${used#v}" = "${latest#v}" ]; then
+                status="up to date"
+              else
+                status="behind"
+              fi
+            fi
+            echo "| \`${repo}\` | \`${used}\` | \`${latest}\` | ${status} |" >> "$GITHUB_STEP_SUMMARY"
+            printf '%-45s pinned=%-12s latest=%-20s %s\n' "$repo" "$used" "$latest" "$status"
+            status=""
+          done <<EOF
+          $pins
+          EOF
+
+          if [ "$unresolved" -ne 0 ]; then
+            echo "::error::${unresolved} action pin(s) cannot be resolved; a nonexistent action breaks its job"
+            exit 1
+          fi
 
   security-audit:
     name: Security Audit
@@ -101,25 +154,27 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install cargo-audit --locked
 
       - name: Run cargo audit
-        run: cargo audit --workspace --json > audit-report.json || true
+        run: cargo audit --json > audit-report.json
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny
+        run: cargo install cargo-deny --locked
 
       - name: Run cargo deny
-        run: cargo deny check advisories bans licenses sources || true
+        run: |
+          test -f deny.toml || { echo "ERROR: deny.toml is missing from the repo root; refusing to run a vacuous cargo-deny check"; exit 1; }
+          cargo deny check advisories bans licenses sources
 
       - name: Upload audit report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: security-audit-report
           path: audit-report.json
@@ -127,7 +182,7 @@ jobs:
 
       - name: Comment on PR with security results
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
