@@ -52,34 +52,58 @@ yanked = "deny"
 #     vulnerability-level entry (RUSTSEC-2026-0403) needs a *legacy* frame whose
 #     streaming decompression fails, and is listed below as accepted.
 #
-# Removing an entry from this list is what actually tightens the gate: any NEW
-# advisory fails the job, because `[advisories]` denies vulnerabilities by default.
+# `cargo deny check advisories` treats unmaintained and unsound findings as errors
+# in this schema (`unmaintained = "all"`, `unsound = "all"`), so every pre-existing
+# one has to be accepted explicitly here — otherwise the gate is permanently red and
+# hides genuinely new findings. Each entry below is accepted by exposure analysis and
+# tracked for remediation in issue #24.
+#
+# Removing an entry is what tightens the gate: any NEW advisory of any class fails
+# the job, because the checks stay enabled.
+#
+# Verified on CI run 41768674636: with the vulnerability IDs accepted, the summary
+# line was `advisories FAILED, bans ok, licenses ok, sources ok` — the only failures
+# left were these unsound/unmaintained entries, i.e. the ignore mechanism works and
+# the license/bans/sources gates pass as configured.
 ignore = [
-    # h2: unbounded empty DATA frames (DoS from a malicious HTTP/2 peer).
-    "RUSTSEC-2026-0258",
-    # rustls: Debug impls expose TLS secrets — requires the code to Debug-format a
-    # client session value, which nothing in this workspace does.
-    "RUSTSEC-2026-0346",
-    # rustls: unauthenticated ServerHello can downgrade later connections —
-    # requires an active man-in-the-middle against the registry connection.
-    "RUSTSEC-2026-0349",
-    # rustls-webpki: reachable panic parsing a CRL — CRL checking is not enabled
-    # on any client in this workspace.
-    "RUSTSEC-2026-0104",
-    # rustls-webpki: certificate verification may accept distrusted intermediates,
-    # and name-constraint handling (URI and wildcard names) was too permissive.
-    # Real trust-decision defects; reachable only when verifying certificates, and
-    # every connection this workspace makes is to a known registry endpoint.
-    "RUSTSEC-2026-0382",
-    "RUSTSEC-2026-0099",
-    "RUSTSEC-2026-0098",
-    # rustls-webpki: CRL matching logic (see 2026-0104 for the CRL caveat).
-    "RUSTSEC-2026-0049",
-    # ruzstd: decompression bomb — the crate is not in the build graph at all.
-    "RUSTSEC-2026-0344",
-    # zstd-safe: uninitialized memory exposed when streaming decompression of a
-    # legacy frame fails.
-    "RUSTSEC-2026-0403",
+    # ---------- vulnerabilities (see the analysis above) ----------
+    "RUSTSEC-2026-0258", # h2: unbounded empty DATA frames
+    "RUSTSEC-2026-0346", # rustls: Debug impls expose TLS secrets
+    "RUSTSEC-2026-0349", # rustls: unauthenticated ServerHello downgrade
+    "RUSTSEC-2026-0104", # rustls-webpki: panic parsing a CRL (CRL checking unused)
+    "RUSTSEC-2026-0382", # rustls-webpki: may accept distrusted intermediates
+    "RUSTSEC-2026-0099", # rustls-webpki: wildcard name constraints
+    "RUSTSEC-2026-0098", # rustls-webpki: URI name constraints
+    "RUSTSEC-2026-0049", # rustls-webpki: faulty CRL matching logic
+    "RUSTSEC-2026-0403", # zstd-safe: uninit memory on failed legacy-frame decompress
+    # NOTE: RUSTSEC-2026-0344 (ruzstd) is deliberately NOT listed. ruzstd is not in
+    # the build graph, so the advisory is not detected; if a future change pulls the
+    # crate in, it must fail here rather than be pre-accepted.
+
+    # ---------- unsound (12) ----------
+    # zstd-safe 6.0.6 — APIs this workspace does not call. All eight disappear with
+    # the `zstd` 0.12 -> 0.13+ bump (remediation step 1 in #24).
+    "RUSTSEC-2026-0395", # use-after-free with CParameter::StableInBuffer
+    "RUSTSEC-2026-0397", # OutBuffer::around_pos exposes uninitialized memory
+    "RUSTSEC-2026-0399", # use-after-free via init_using_cdict / init_using_ddict
+    "RUSTSEC-2026-0400", # use-after-free of a dictionary after a one-shot call
+    "RUSTSEC-2026-0401", # out-of-bounds read in train_from_buffer
+    "RUSTSEC-2026-0402", # heap buffer overflow in CCtx::try_clone
+    "RUSTSEC-2026-0404", # double free in DCtx::try_clone
+    "RUSTSEC-2026-0406", # use-after-free changing a multithreaded context
+    # git2 0.18.3 — the gitops path; fixed by the git2 0.19+ bump (#24 step 4).
+    "RUSTSEC-2026-0183", # UB calling Remote::list()
+    "RUSTSEC-2026-0008", # UB dereferencing Buf
+    "RUSTSEC-2026-0184", # UB with Signature from a buffer-created BlameHunk
+    # lexical-core 0.7.6 / pprof 0.12.1 — transitive, unused code paths in our builds.
+    "RUSTSEC-2023-0086", # lexical-core: multiple soundness issues
+    "RUSTSEC-2024-0408", # pprof: unsound slice::from_raw_parts
+
+    # ---------- unmaintained (4 detected) ----------
+    "RUSTSEC-2026-0370", # zvariant — merged into zbus 6; migration tracked in #24
+    "RUSTSEC-2026-0372", # zvariant_derive — same announcement
+    "RUSTSEC-2025-0134", # rustls-pemfile — superseded by rustls-pki-types
+    "RUSTSEC-2024-0449", # unsafe-libyaml — yaml path; no fix published upstream
 ]
 
 [licenses]
