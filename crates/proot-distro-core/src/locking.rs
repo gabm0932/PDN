@@ -199,7 +199,10 @@ mod tests {
         let mut lock2 = ContainerLock::new("test_contention_box", true);
         let res2 = lock2.acquire();
         assert!(res2.is_err());
-        assert!(res2.unwrap_err().to_string().contains("held by another process"));
+        assert!(res2
+            .unwrap_err()
+            .to_string()
+            .contains("held by another process"));
 
         // Release first lock
         drop(lock1);
@@ -234,9 +237,7 @@ mod tests {
         // `std::env::temp_dir()` falls back to it when TMPDIR is unset.
         let base = std::env::var_os("TMPDIR")
             .map(std::path::PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("PREFIX").map(|p| std::path::PathBuf::from(p).join("tmp"))
-            })
+            .or_else(|| std::env::var_os("PREFIX").map(|p| std::path::PathBuf::from(p).join("tmp")))
             .unwrap_or_else(std::env::temp_dir);
         std::fs::create_dir_all(&base).expect("temp base");
         let path = base.join(format!("pdn-filelock-{}.lock", std::process::id()));

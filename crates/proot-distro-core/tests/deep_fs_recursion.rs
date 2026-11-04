@@ -28,15 +28,25 @@ fn test_deep_l2s_rewrite_220_levels() {
         }
     }
 
-    println!("[TEST] Created 220-level directory with {} l2s symlinks", symlink_count);
+    println!(
+        "[TEST] Created 220-level directory with {} l2s symlinks",
+        symlink_count
+    );
 
     // Run rewrite_l2s_tree
     let start = std::time::Instant::now();
     let res = proot_distro_core::l2s::rewrite_l2s_tree(&old_root, &old_root, &new_root);
     let dur = start.elapsed();
-    println!("[TEST] rewrite_l2s_tree 220 levels result: {:?}, time: {:?}", res, dur);
+    println!(
+        "[TEST] rewrite_l2s_tree 220 levels result: {:?}, time: {:?}",
+        res, dur
+    );
 
-    assert!(res.is_ok(), "rewrite_l2s_tree failed on 220 levels: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "rewrite_l2s_tree failed on 220 levels: {:?}",
+        res
+    );
     assert_eq!(res.unwrap(), symlink_count);
 }
 
@@ -73,7 +83,11 @@ fn test_deep_layer_diff_220_levels() {
     let dur = start.elapsed();
     println!("[TEST] layer_diff result: {:?}, time: {:?}", res, dur);
 
-    assert!(res.is_ok(), "compute_layer_diff failed on 220 levels: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "compute_layer_diff failed on 220 levels: {:?}",
+        res
+    );
     assert!(out_tar.exists(), "diff tar was not created");
 }
 
@@ -108,12 +122,19 @@ fn test_deep_untar_220_levels() {
     let dur = start.elapsed();
     println!("[TEST] untar::extract result: {:?}, time: {:?}", res, dur);
 
-    assert!(res.is_ok(), "untar::extract failed on 220 levels: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "untar::extract failed on 220 levels: {:?}",
+        res
+    );
 
     // Verify leaf exists
     let mut check = dest.clone();
     for i in 0..220 {
         check = check.join(format!("d{}", i));
     }
-    assert!(check.join("deepest.txt").exists(), "deepest file missing in unpacked tree");
+    assert!(
+        check.join("deepest.txt").exists(),
+        "deepest file missing in unpacked tree"
+    );
 }

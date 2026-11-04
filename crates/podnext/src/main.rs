@@ -1403,17 +1403,54 @@ async fn run() -> Result<()> {
         pn_trace!("[DEBUG main] Raw args: {:?}", raw_args);
     }
 
-    let dashdash_idx = raw_args.iter().position(|a| a == "--").unwrap_or(raw_args.len());
+    let dashdash_idx = raw_args
+        .iter()
+        .position(|a| a == "--")
+        .unwrap_or(raw_args.len());
     let pre_dashdash_args = &raw_args[..dashdash_idx];
 
     const SUBCOMMANDS: &[&str] = &[
-        "run", "login", "list", "ps", "kill", "copy", "sync", "rename", "reset",
-        "install", "remove", "search", "build", "docker", "images", "network",
-        "volume", "backup", "restore", "plugin", "help", "completion", "status",
-        "info", "exec", "logs", "stop", "start", "restart", "attach", "commit"
+        "run",
+        "login",
+        "list",
+        "ps",
+        "kill",
+        "copy",
+        "sync",
+        "rename",
+        "reset",
+        "install",
+        "remove",
+        "search",
+        "build",
+        "docker",
+        "images",
+        "network",
+        "volume",
+        "backup",
+        "restore",
+        "plugin",
+        "help",
+        "completion",
+        "status",
+        "info",
+        "exec",
+        "logs",
+        "stop",
+        "start",
+        "restart",
+        "attach",
+        "commit",
     ];
-    let has_subcommand = pre_dashdash_args.iter().skip(1).any(|a| SUBCOMMANDS.contains(&a.as_str()));
-    let is_direct_execution = !has_subcommand && pre_dashdash_args.iter().skip(1).any(|a| a == "-r" || a == "--rootfs");
+    let has_subcommand = pre_dashdash_args
+        .iter()
+        .skip(1)
+        .any(|a| SUBCOMMANDS.contains(&a.as_str()));
+    let is_direct_execution = !has_subcommand
+        && pre_dashdash_args
+            .iter()
+            .skip(1)
+            .any(|a| a == "-r" || a == "--rootfs");
 
     if is_direct_execution {
         if pn_debug {

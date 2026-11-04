@@ -1486,8 +1486,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_delete_backup_does_not_deadlock() {
         let mut config = BackupConfig::default();
-        config.backup_dir =
-            std::env::temp_dir().join(format!("pn-delete-test-{}", Uuid::new_v4()));
+        config.backup_dir = std::env::temp_dir().join(format!("pn-delete-test-{}", Uuid::new_v4()));
         let manager = BackupManager::new(config);
 
         let id = "deadlock-regression";
