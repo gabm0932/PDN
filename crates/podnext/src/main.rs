@@ -34,7 +34,7 @@ mod utils;
 use native::{
     install_image_native, kill_container_native, list_containers_native, list_sessions_native,
     list_sessions_native_full, login_container_native, remove_container_native,
-    run_container_native, search_docker_hub,
+    run_container_native, search_docker_hub, verify_image_available,
 };
 use utils::format_size;
 
@@ -1396,15 +1396,24 @@ async fn run() -> Result<()> {
 
     // Check for direct execution mode early (before clap parsing)
     // Direct execution: podnext [flags...] -r /rootfs [flags...] -- <cmd> ...
-    // We do early parsing for ALL direct execution cases to avoid clap subcommand conflicts
+    // Direct execution only applies if NO subcommand is used and -r/--rootfs is BEFORE '--'
     let raw_args: Vec<String> = std::env::args().collect();
     let pn_debug = std::env::var_os("PN_NEXT_DEBUG").is_some();
     if pn_debug {
         pn_trace!("[DEBUG main] Raw args: {:?}", raw_args);
     }
 
-    // Check if this is a direct execution mode (has -r or --rootfs anywhere)
-    let is_direct_execution = raw_args.iter().any(|a| a == "-r" || a == "--rootfs");
+    let dashdash_idx = raw_args.iter().position(|a| a == "--").unwrap_or(raw_args.len());
+    let pre_dashdash_args = &raw_args[..dashdash_idx];
+
+    const SUBCOMMANDS: &[&str] = &[
+        "run", "login", "list", "ps", "kill", "copy", "sync", "rename", "reset",
+        "install", "remove", "search", "build", "docker", "images", "network",
+        "volume", "backup", "restore", "plugin", "help", "completion", "status",
+        "info", "exec", "logs", "stop", "start", "restart", "attach", "commit"
+    ];
+    let has_subcommand = pre_dashdash_args.iter().skip(1).any(|a| SUBCOMMANDS.contains(&a.as_str()));
+    let is_direct_execution = !has_subcommand && pre_dashdash_args.iter().skip(1).any(|a| a == "-r" || a == "--rootfs");
 
     if is_direct_execution {
         if pn_debug {
@@ -1840,12 +1849,29 @@ fn output_yaml<T: serde::Serialize>(items: &T) -> Result<()> {
 
 // Container command implementations (existing)
 async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result<()> {
-    let container_name = name
-        .clone()
-        .unwrap_or_else(|| image.split(':').next().unwrap_or(&image).to_string());
+    let container_name = match &name {
+        Some(explicit) => explicit.clone(),
+        None => default_container_name(&image),
+    };
+
+    // An explicit `--name ""` used to be accepted: the container directory then
+    // collapsed onto the containers root itself, creating an orphan that `list`
+    // showed with a blank name and `remove` could never match. Derived names are
+    // validated too, so no install can create an unusable path.
+    proot_distro_core::NameValidator::new().validate_container_name(&container_name)?;
 
     let _rootfs: PathBuf = install_image_native(&image, &container_name, force, None).await?;
     Ok(())
+}
+
+/// Derive a container name from an image reference.
+///
+/// `debian:13` and `ghcr.io:5000/acme/web:1.2` both yield a single path component
+/// (`debian`, `web`): a registry host, port, or namespace must never become a
+/// directory component under `~/.podnext/containers/`.
+fn default_container_name(image: &str) -> String {
+    let last = image.rsplit('/').next().unwrap_or(image);
+    last.split(':').next().unwrap_or(last).to_string()
 }
 
 async fn cmd_list(all: bool, no_all: bool, format: OutputFormat) -> Result<()> {
@@ -3103,6 +3129,12 @@ async fn cmd_reset(name: String) -> Result<()> {
 
     println!("Resetting '{}' from '{}'.", name, image_ref);
     println!("This deletes the container and everything inside it.");
+
+    // Fail before the irreversible step. A `backup restore` records the *source
+    // container* as the image, which is not a registry reference; the old order
+    // deleted the container first and only then discovered the image could not be
+    // fetched, losing the container with nothing to replace it.
+    verify_image_available(&image_ref).await?;
 
     std::fs::remove_dir_all(&container_dir)?;
     install_image_native(&image_ref, &name, false, None).await?;

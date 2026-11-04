@@ -195,6 +195,20 @@ pub async fn install_image_native(
     Ok(rootfs)
 }
 
+/// Check that an image reference can actually be fetched, before anything destructive.
+///
+/// `reset` deletes the container directory and only then installs the base image, so
+/// an unfetchable reference — including one a `backup restore` wrote as a *container*
+/// name rather than a registry reference — destroyed the container and then failed to
+/// replace it. Resolving the manifest here costs one round trip and lets the caller
+/// fail first, while the container is still on disk.
+pub async fn verify_image_available(image_ref: &str) -> Result<()> {
+    let (name, tag) = parse_image_ref(image_ref)?;
+    let token = get_docker_hub_token(&name).await?;
+    get_manifest(&name, &tag, &token).await?;
+    Ok(())
+}
+
 /// Write the guest's network configuration files.
 ///
 /// Docker/OCI rootfs images ship no `/etc/resolv.conf`, and Termux has none to
