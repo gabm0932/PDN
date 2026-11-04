@@ -4,8 +4,9 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -47,11 +48,46 @@ pub fn register_session(
     pid: u32,
     uid: &str,
     cmd: &[String],
-) -> Result<std::fs::File> {
-    let dir = sessions_dir();
-    std::fs::create_dir_all(&dir)?;
+) -> Result<SessionGuard> {
+    register_session_in(&sessions_dir(), container, pid, uid, cmd)
+}
 
-    let path = session_file_path(pid);
+/// Owns a session file's `LOCK_EX` and unlinks the file when dropped, so a run
+/// that exits normally leaves no stale `{pid}.json` behind. A hard kill
+/// (SIGKILL) still leaves the file; `active_sessions()` prunes those lazily.
+#[derive(Debug)]
+pub struct SessionGuard {
+    /// Kept alive so the advisory lock is held for the whole run.
+    _file: std::fs::File,
+    path: PathBuf,
+    dev: u64,
+    ino: u64,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        // Unlink only if the path still names *our* inode: a reused pid may
+        // have created a fresh file at the same path after we opened it.
+        if let Ok(meta) = std::fs::metadata(&self.path) {
+            if meta.dev() == self.dev && meta.ino() == self.ino {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
+    }
+}
+
+/// Register a session in an explicit directory. Split from [`register_session`]
+/// so tests use a private dir instead of mutating the process-wide `RUNTIME_DIR`.
+fn register_session_in(
+    dir: &Path,
+    container: &str,
+    pid: u32,
+    uid: &str,
+    cmd: &[String],
+) -> Result<SessionGuard> {
+    std::fs::create_dir_all(dir)?;
+
+    let path = dir.join(format!("{}.json", pid));
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -108,7 +144,13 @@ pub fn register_session(
     (&file).write_all(&data)?;
     (&file).flush()?;
 
-    Ok(file)
+    let meta = file.metadata()?;
+    Ok(SessionGuard {
+        _file: file,
+        path,
+        dev: meta.dev(),
+        ino: meta.ino(),
+    })
 }
 
 /// Query active sessions by probing non-blocking shared locks on session files.
@@ -324,6 +366,42 @@ mod tests {
         // Now probing should find the lock free, prune the file, and return empty
         let active_after = active_sessions().expect("active sessions after drop");
         assert_eq!(active_after.len(), 0);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn session_file_removed_on_drop() {
+        let tmp = crate::paths::temp_base().join(format!("pdn-sess-drop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let json_count = || {
+            std::fs::read_dir(&tmp)
+                .unwrap()
+                .filter(|e| {
+                    e.as_ref()
+                        .map(|e| e.path().extension().and_then(|s| s.to_str()) == Some("json"))
+                        .unwrap_or(false)
+                })
+                .count()
+        };
+
+        {
+            let _guard = register_session_in(&tmp, "c1", 4242, "1000", &["bash".to_string()])
+                .expect("register session");
+            assert_eq!(
+                json_count(),
+                1,
+                "session file exists while the guard is held"
+            );
+        }
+
+        assert_eq!(
+            json_count(),
+            0,
+            "session file unlinked when the guard drops"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
