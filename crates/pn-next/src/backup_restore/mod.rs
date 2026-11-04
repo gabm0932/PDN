@@ -1112,7 +1112,12 @@ impl BackupManager {
 
     pub async fn delete_backup(&self, backup_id: &str) -> Result<()> {
         let backups = self.backups.read().await;
-        if let Some(backup) = backups.get(backup_id) {
+        let exists = backups.contains_key(backup_id);
+        // Release the read guard before touching anything else: `backups` is a
+        // tokio RwLock (not reentrant), so taking write() below while still
+        // holding read() would wait on ourselves forever.
+        drop(backups);
+        if exists {
             let archive_path = self.config.backup_dir.join(format!("{}.tar.gz", backup_id));
             if archive_path.exists() {
                 fs::remove_file(archive_path).await?;
@@ -1476,6 +1481,54 @@ mod tests {
         let policy = RetentionPolicy::default();
         assert_eq!(policy.hourly, 24);
         assert_eq!(policy.daily, 7);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_delete_backup_does_not_deadlock() {
+        let mut config = BackupConfig::default();
+        config.backup_dir =
+            std::env::temp_dir().join(format!("pn-delete-test-{}", Uuid::new_v4()));
+        let manager = BackupManager::new(config);
+
+        let id = "deadlock-regression";
+        manager
+            .update_backup_metadata(
+                id,
+                BackupMetadata {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                    container_id: "c1".to_string(),
+                    container_name: "c1".to_string(),
+                    backup_type: BackupType::Full,
+                    status: BackupStatus::Completed,
+                    created_at: SystemTime::now(),
+                    completed_at: Some(SystemTime::now()),
+                    size_bytes: 0,
+                    compressed_size: 0,
+                    checksum: String::new(),
+                    manifest: BackupManifest {
+                        files: Vec::new(),
+                        total_files: 0,
+                        total_size: 0,
+                        volumes: Vec::new(),
+                        config: None,
+                        logs: None,
+                    },
+                    labels: HashMap::new(),
+                    annotations: HashMap::new(),
+                    error_message: None,
+                },
+            )
+            .await;
+
+        // Issue #12: delete_backup used to take the write lock while still
+        // holding its own read guard, so it blocked forever. A bounded timeout
+        // turns that hang into a test failure instead of wedging the suite.
+        let result = tokio::time::timeout(Duration::from_secs(5), manager.delete_backup(id)).await;
+        std::fs::remove_dir_all(&manager.config.backup_dir).ok();
+
+        result.expect("delete_backup deadlocked: it waited on its own read guard");
+        assert!(manager.get_backup(id).await.is_none());
     }
 }
 
