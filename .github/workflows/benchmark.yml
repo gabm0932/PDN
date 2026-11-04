@@ -53,25 +53,38 @@ jobs:
       - name: Install criterion
         run: cargo install cargo-criterion
 
-      - name: Verify benchmark targets exist
+      - name: Verify benchmark targets exist and compile
         run: |
-          # A green benchmark check must mean benchmarks actually ran: fail if the
-          # workspace declares no [[bench]] target (otherwise cargo bench is a no-op).
+          set -euo pipefail
+          # A green benchmark check must mean benchmarks actually ran. Two things have
+          # to hold, and the guard that was here only checked the first:
+          #   1. the workspace declares [[bench]] targets, and
+          #   2. those targets COMPILE.
+          # Condition 2 was silently false: the bench sources had drifted from the
+          # crate APIs (`cargo bench` failed with 26 errors — E0432/E0422/E0560/E0599)
+          # while this workflow reported success, because the `| tee` below masked the
+          # exit status. Checking only for the `[[bench]]` marker gave a green tick
+          # over a target that could not build.
           if ! grep -rq --include=Cargo.toml "^\[\[bench\]\]" crates/ Cargo.toml; then
             echo "::error::No [[bench]] targets found in the workspace; cargo bench would measure nothing."
             exit 1
           fi
-          echo "Benchmark targets found:"
           grep -rn --include=Cargo.toml "^\[\[bench\]\]" crates/ Cargo.toml
+          # Build them, so "the targets exist" also means "the targets build".
+          cargo bench --workspace --locked --no-run
 
       - name: Run benchmarks
         run: |
-          cargo bench --workspace --locked --no-run 2>&1 | tail -20
+          # `set -o pipefail` is load-bearing: GitHub Actions' default `bash -e`
+          # reports only the LAST command's status, so `cargo bench ... | tee file`
+          # returned tee's 0 and any benchmark failure was invisible to the job.
+          set -euo pipefail
           cargo bench --workspace --locked 2>&1 | tee benchmark-output.txt
 
       - name: Compare with baseline
         if: github.event_name == 'pull_request' && github.event.pull_request.base.repo.full_name == github.repository
         run: |
+          set -euo pipefail
           # Derive the baseline from the PR's base branch at runtime, so this does not
           # hardcode a default branch name that may not exist (repo default: master).
           BASEREF="${{ github.base_ref }}"
