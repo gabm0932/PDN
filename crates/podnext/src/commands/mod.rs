@@ -2041,6 +2041,17 @@ async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathB
 
     println!("Parsing Dockerfile: {}", dockerfile_path.display());
     let content = std::fs::read_to_string(&dockerfile_path)?;
+    // The Dockerfile parser (owned by proot-distro-core) has no ARG variant, so
+    // consume ARG instructions here: declare them and substitute their values
+    // into the instructions that follow.
+    let (content, build_args) = preprocess_build_args(&content);
+    for (name, value) in &build_args {
+        if value.is_empty() {
+            println!("Build arg: {} (no default)", name);
+        } else {
+            println!("Build arg: {}={}", name, value);
+        }
+    }
     let instructions = proot_distro_core::dockerfile::parse_dockerfile(&content)?;
     println!("Parsed {} instruction(s):", instructions.len());
 
@@ -2063,6 +2074,19 @@ async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathB
         println!("Base image: {}", base_image);
     }
 
+    // RUN instructions execute with `sh -c` in the build context. ENV/WORKDIR
+    // are not applied here: there is no assembled rootfs to apply them to.
+    let ctx = if path.exists() {
+        path.as_path()
+    } else {
+        std::path::Path::new(".")
+    };
+    for inst in &instructions {
+        if let proot_distro_core::dockerfile::DockerfileInstruction::Run(cmd) = inst {
+            execute_run(cmd, ctx)?;
+        }
+    }
+
     let scratch_dir = proot_distro_core::paths::temp_base();
     let out_layer_tar = scratch_dir.join(format!("build_layer_{}.tar.gz", uuid::Uuid::new_v4()));
 
@@ -2083,6 +2107,110 @@ async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathB
     }
 
     println!("\nSuccessfully built image '{}'", target_tag);
+    Ok(())
+}
+
+/// Consume `ARG` instructions from Dockerfile content.
+///
+/// Returns the content with `ARG` lines removed and the declared args in order.
+/// Values are substituted into the remaining instructions so later lines can
+/// use `$NAME` / `${NAME}`. `proot-distro-core`'s parser has no `ARG` variant,
+/// so this keeps `build local` working without changing that crate.
+fn preprocess_build_args(content: &str) -> (String, Vec<(String, String)>) {
+    let mut args: Vec<(String, String)> = Vec::new();
+    let mut kept = String::with_capacity(content.len());
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let verb = parts.next().unwrap_or("");
+        let rest = parts.next().unwrap_or("").trim();
+        if verb.eq_ignore_ascii_case("ARG") {
+            if let Some((name, default)) = rest.split_once('=') {
+                args.push((name.trim().to_string(), strip_arg_quotes(default.trim())));
+            } else if !rest.is_empty() {
+                args.push((rest.to_string(), String::new()));
+            }
+            continue;
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    let substituted = substitute_build_args(&kept, &args);
+    (substituted, args)
+}
+
+fn strip_arg_quotes(s: &str) -> String {
+    let s = s.trim();
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
+    {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Replace `$NAME` / `${NAME}` with the value of a declared build arg.
+fn substitute_build_args(content: &str, args: &[(String, String)]) -> String {
+    if args.is_empty() {
+        return content.to_string();
+    }
+    let lookup = |name: &str| {
+        args.iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    };
+    let bytes = content.as_bytes();
+    let mut out = String::with_capacity(content.len());
+    let mut i = 0;
+    while i < content.len() {
+        if bytes[i] == b'$' {
+            if i + 1 < content.len() && bytes[i + 1] == b'{' {
+                if let Some(close) = content[i + 2..].find('}') {
+                    let name = &content[i + 2..i + 2 + close];
+                    if let Some(v) = lookup(name) {
+                        out.push_str(v);
+                        i += 2 + close + 1;
+                        continue;
+                    }
+                }
+            } else {
+                let start = i + 1;
+                let mut end = start;
+                while end < content.len()
+                    && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                {
+                    end += 1;
+                }
+                if end > start {
+                    if let Some(v) = lookup(&content[start..end]) {
+                        out.push_str(v);
+                        i = end;
+                        continue;
+                    }
+                }
+            }
+        }
+        let ch = content[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Execute one `RUN` instruction with `sh -c` in the build context directory.
+fn execute_run(cmd: &str, ctx: &std::path::Path) -> Result<()> {
+    println!("Running: {}", cmd);
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(ctx)
+        .status()
+        .with_context(|| format!("failed to execute RUN instruction '{}'", cmd))?;
+    if !status.success() {
+        bail!("RUN instruction failed ({}): '{}'", status, cmd);
+    }
     Ok(())
 }
 
@@ -2576,4 +2704,69 @@ fn process_alive(pid: u32) -> bool {
     // `/proc/<pid>` disappears with the process; no signal needed, so nothing
     // is disturbed by a mere status check.
     std::path::Path::new(&format!("/proc/{}", pid)).exists()
+}
+
+#[cfg(test)]
+mod build_local_tests {
+    use super::*;
+    use proot_distro_core::dockerfile::{parse_dockerfile, DockerfileInstruction};
+
+    /// The exec plan `cmd_build_local` derives from Dockerfile content: the
+    /// `RUN` commands in order, plus the declared build args.
+    fn run_plan(content: &str) -> (Vec<String>, Vec<(String, String)>) {
+        let (cleaned, args) = preprocess_build_args(content);
+        let cmds = parse_dockerfile(&cleaned)
+            .expect("preprocessed Dockerfile must parse")
+            .into_iter()
+            .filter_map(|i| match i {
+                DockerfileInstruction::Run(c) => Some(c),
+                _ => None,
+            })
+            .collect();
+        (cmds, args)
+    }
+
+    // Fails before the fix: `parse_dockerfile` bails on `ARG`.
+    #[test]
+    fn arg_is_accepted_and_substituted() {
+        let content = "FROM alpine:3.19\nARG VERSION=1.2.3\nARG NAME=\"world\"\nRUN echo $VERSION ${NAME}\nCOPY a b\n";
+        let (cmds, args) = run_plan(content);
+        assert_eq!(
+            args,
+            vec![
+                ("VERSION".to_string(), "1.2.3".to_string()),
+                ("NAME".to_string(), "world".to_string()),
+            ]
+        );
+        assert_eq!(cmds, vec!["echo 1.2.3 world".to_string()]);
+    }
+
+    #[test]
+    fn arg_without_default_is_declared_empty() {
+        let (cmds, args) = run_plan("FROM alpine\nARG TOKEN\nRUN echo ${TOKEN}\n");
+        assert_eq!(args, vec![("TOKEN".to_string(), String::new())]);
+        assert_eq!(cmds, vec!["echo".to_string()]);
+    }
+
+    #[test]
+    fn run_instructions_execute_in_order_in_context() {
+        let ctx = tempfile::tempdir().unwrap();
+        let content = "FROM alpine\nRUN echo one > a.txt\nRUN echo two >> a.txt\n";
+        let (cmds, _) = run_plan(content);
+        for c in &cmds {
+            execute_run(c, ctx.path()).unwrap();
+        }
+        let got = std::fs::read_to_string(ctx.path().join("a.txt")).unwrap();
+        assert_eq!(got, "one\ntwo\n");
+    }
+
+    #[test]
+    fn failing_run_propagates() {
+        let ctx = tempfile::tempdir().unwrap();
+        let err = execute_run("exit 7", ctx.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("RUN instruction failed"),
+            "unexpected error: {err}"
+        );
+    }
 }

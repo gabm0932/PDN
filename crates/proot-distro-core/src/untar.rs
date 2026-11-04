@@ -26,11 +26,20 @@
 //! block the write.
 
 use anyhow::{anyhow, Result};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read};
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tar::{Archive, EntryType};
+
+/// `create_dir_all` calls made on this thread — thread-local so parallel tests
+/// cannot see each other's work. The regression test below counts it instead of
+/// timing anything, so it cannot flake on a slow device.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static DIR_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Unpack a tar stream into `dest`, creating it if needed.
 pub fn extract<R: Read>(reader: R, dest: &Path) -> Result<()> {
@@ -41,6 +50,12 @@ pub fn extract<R: Read>(reader: R, dest: &Path) -> Result<()> {
 /// Unpack an already-open archive, for callers that need to inspect it first.
 pub fn extract_entries<R: Read>(archive: &mut Archive<R>, dest: &Path) -> Result<()> {
     fs::create_dir_all(dest)?;
+    // Directories already known to exist this run. Without it every entry
+    // re-walks its whole ancestor chain through `create_dir_all` (a `mkdir`
+    // plus a `stat`, each resolving every component), so a tree `d` levels
+    // deep with `n` entries below it paid `n * d` resolutions.
+    let mut created: HashSet<PathBuf> = HashSet::new();
+    created.insert(dest.to_path_buf());
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -54,12 +69,12 @@ pub fn extract_entries<R: Read>(archive: &mut Archive<R>, dest: &Path) -> Result
             continue;
         }
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
+            ensure_dir(parent, &mut created)?;
         }
 
         match kind {
             EntryType::Directory => {
-                fs::create_dir_all(&target)?;
+                ensure_dir(&target, &mut created)?;
             }
             EntryType::Regular | EntryType::Continuous => {
                 let mut out = fs::File::create(&target)?;
@@ -106,6 +121,29 @@ pub fn extract_entries<R: Read>(archive: &mut Archive<R>, dest: &Path) -> Result
         }
     }
 
+    Ok(())
+}
+
+/// Create `dir` unless this run already did.
+///
+/// `fs::create_dir_all` on a path that already exists still performs a `mkdir`
+/// (fails `EEXIST`) and then a `stat`, and each of those resolves every one of
+/// the path's ancestors. Archives are walked entry by entry, so a deep tree
+/// with many entries below it paid that ancestor walk once per entry — the
+/// super-linear cost behind a 200-level extraction that never finished. Each
+/// directory is created once here; every later entry under it is a lookup.
+fn ensure_dir(dir: &Path, created: &mut HashSet<PathBuf>) -> io::Result<()> {
+    if created.contains(dir) {
+        return Ok(());
+    }
+    #[cfg(test)]
+    DIR_CALLS.with(|c| c.set(c.get() + 1));
+    fs::create_dir_all(dir)?;
+    // Only `dir` itself is recorded, not its ancestors: listing the chain would
+    // cost a `PathBuf` clone per level. Archives list a directory before its
+    // contents, so the ancestor is normally already known; an out-of-order
+    // archive just pays the walk it paid before.
+    created.insert(dir.to_path_buf());
     Ok(())
 }
 
@@ -205,6 +243,69 @@ mod tests {
         // escapes it.
         assert!(dir.join("escaped").exists());
         assert!(!dir.parent().unwrap().join("escaped").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Append one entry with `size` bytes of filler.
+    fn append(builder: &mut Builder<Vec<u8>>, name: &str, kind: EntryType, size: usize) {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(size as u64);
+        header.set_mode(if kind == EntryType::Directory {
+            0o755
+        } else {
+            0o644
+        });
+        header.set_entry_type(kind);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, name, &vec![b'x'; size][..])
+            .unwrap();
+    }
+
+    /// Issue #16. A deep tree used to make every entry walk its whole ancestor
+    /// chain again through `create_dir_all`, so a few hundred levels with files
+    /// under them took minutes. The work is counted, not timed, so this cannot
+    /// flake on a slow device.
+    #[test]
+    fn deep_tree_creates_each_directory_once() {
+        const DEPTH: usize = 150;
+        const FILES: usize = 400;
+
+        let dir = std::env::temp_dir().join(format!("pdn-untar-deep-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut builder = Builder::new(Vec::new());
+        let mut deep = String::from("root");
+        for i in 0..DEPTH {
+            deep.push_str(&format!("/d{}", i));
+            append(&mut builder, &format!("{}/", deep), EntryType::Directory, 0);
+        }
+        for k in 0..FILES {
+            append(
+                &mut builder,
+                &format!("{}/f{}", deep, k),
+                EntryType::Regular,
+                4,
+            );
+        }
+        let tar = builder.into_inner().unwrap();
+
+        DIR_CALLS.with(|c| c.set(0));
+        extract(tar.as_slice(), &dir).expect("extract deep tree");
+        let calls = DIR_CALLS.with(|c| c.get());
+
+        // The tree is really there, all the way down.
+        assert!(dir.join(&deep).join(format!("f{}", FILES - 1)).exists());
+
+        // One creation per distinct directory is the floor. Anything that grows
+        // with FILES means the ancestor chain is being re-walked per entry.
+        assert!(
+            calls <= DEPTH + 2,
+            "{calls} create_dir_all calls for {FILES} files under {DEPTH} levels: \
+             the ancestor chain is walked once per entry, not once per directory"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

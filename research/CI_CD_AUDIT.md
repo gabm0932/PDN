@@ -299,8 +299,47 @@ ls: cannot access '.cargo/': No such file or directory
 ### D11 — Duplicate Android cross-compile work — LOW (cost)
 - `ci.yml:94-162` (`rust-android-cross-compile`, NDK r27c) re-implements a subset of `cross-compile.yml` (full r27c+r30 matrix). Same target, same API 34, same NDK — the aarch64 compile runs twice per push.
 
-### D12 — `benchmark.yml` is a no-op and `cargo bench` output is not enforced — LOW
-- File:line: `benchmark.yml:40-43`. `cargo bench --workspace` finds no `[[bench]]` targets in a design with no criterion benches → exits 0 without measuring anything (hence the misleading 15/15 "success"). The baseline step (`:45-57`) is gated on PRs only and would hit D4 (`git checkout main`).
+### D12 — `benchmark.yml` reported success while the benchmarks could not build — HIGH
+- **Corrected 2026-11-04 after direct verification.** The original text of this entry said
+  "`cargo bench --workspace` finds no `[[bench]]` targets ... exits 0 without measuring
+  anything". That is wrong on the mechanism, and the error was in the *safe-looking*
+  direction: it implied nothing was there to run, when in fact there is a benchmark suite
+  that **fails to compile**.
+- File:line: `benchmark.yml:67-70` (the `Run benchmarks` step). `crates/pn-gateway/Cargo.toml:32`
+  and `crates/pn-next/Cargo.toml:73` DO declare `[[bench]] name = "benchmarks" path =
+  "benches/benchmarks.rs" harness = false`, with real criterion code (`criterion_group!`,
+  `criterion_main!`, `bench_function`) in both `benches/benchmarks.rs` files.
+- Verbatim, on this revision:
+```text
+$ cargo bench --workspace --locked --no-run
+error[E0422]: cannot find struct, variant or union type `BulkheadConfig` in crate `pn_gateway`
+error[E0432]: unresolved imports `pn_gateway::GuardrailsConfig`, `pn_gateway::GuardrailsEngine`, `pn_gateway::ResourceRequest`
+error[E0560]: struct `FailSafeConfig` has no field named `bulkhead`
+error[E0599]: no method named `unwrap` found for struct `FailSafeManager` in the current scope
+error: could not compile `pn-gateway` (bench "benchmarks") due to 12 previous errors
+error: could not compile `pn-next` (bench "benchmarks") due to 14 previous errors
+```
+  (26 errors total across the two targets: 8× E0422, 6× E0560, 6× E0599, 5× E0432, 1× E0433.)
+- **Why the workflow stayed green** — this is the actual defect, and it is the same class as
+  the `|| true` gates: the step piped every command.
+```yaml
+      - name: Run benchmarks
+        run: |
+          cargo bench --workspace --locked --no-run 2>&1 | tail -20
+          cargo bench --workspace --locked 2>&1 | tee benchmark-output.txt
+```
+  GitHub Actions runs `run:` steps with `bash -e` and **without `pipefail`**, so a pipeline's
+  status is the *last* command's: `tail`/`tee` exit 0 and the compile failure never reached
+  the job. Hence 15/15 "success" in §2.3 with a benchmark target that cannot build.
+- Correction to §2.3's interpretation: "100% success here is misleading" was right, but not
+  because `cargo bench` was a no-op — it is misleading because the run failed and reported
+  success.
+- Fixed by: adding `set -euo pipefail` to the benchmark steps, and strengthening the guard
+  step to build the targets (`cargo bench --workspace --locked --no-run`) rather than only
+  grepping for the `[[bench]]` marker — a guard that passes while the target cannot compile
+  is worth nothing. The 26 compile errors were then repaired in
+  `crates/{pn-gateway,pn-next}/benches/benchmarks.rs` so the workflow is green *and* means
+  something.
 
 Additional latent issues observed:
 - `ci.yml:466-474` publish step is disabled via `if: false` and its `run:` block has broken indentation (continuation lines indented 18 spaces). Harmless today, but will fail if re-enabled.
@@ -375,8 +414,12 @@ Add to `benchmark.yml` a narrower filter (`crates/**`, `benches/**`) or restrict
 ### P2 — De-duplicate Android compile
 Remove the `rust-android-cross-compile` job (`ci.yml:93-162`) since `cross-compile.yml` already builds aarch64 + x86_64 for r27c/r30, or make `ci.yml` depend on `cross-compile.yml` artifacts instead of rebuilding.
 
-### P3 — Remove the always-green benchmark / no-op
-`benchmark.yml:40-43` — either add real `criterion` benchmarks (`[[bench]]` in `Cargo.toml`) or disable the workflow until benchmarks exist, so the green check means something.
+### P3 — Stop the benchmark workflow reporting success for a failed run (CORRECTED)
+`benchmark.yml:67-70` — add `set -euo pipefail` so `cargo bench ... | tee` cannot mask the
+exit status, and make the guard step actually build the targets
+(`cargo bench --workspace --locked --no-run`) instead of only grepping for `[[bench]]`. Then
+repair the 26 compile errors in `crates/{pn-gateway,pn-next}/benches/benchmarks.rs` (see D12)
+— the benchmarks exist and are worth keeping; they had simply drifted away from the crate APIs.
 
 ---
 

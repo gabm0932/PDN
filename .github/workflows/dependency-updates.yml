@@ -162,8 +162,13 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
-      - name: Run cargo audit
-        run: cargo audit --json > audit-report.json
+      - name: Run cargo audit (informational report)
+        # The ENFORCING gate is the `cargo deny` step below, which honours the
+        # acceptance list in deny.toml. `cargo audit` cannot read that list, so it
+        # necessarily reports the accepted advisories as well — which makes it
+        # useful as a raw inventory and wrong as a gate. Kept non-fatal on purpose,
+        # and named so the distinction is visible in the job log.
+        run: cargo audit --json > audit-report.json || true
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
@@ -180,35 +185,13 @@ jobs:
           path: audit-report.json
           retention-days: 30
 
-      - name: Comment on PR with security results
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-            const report = fs.readFileSync('audit-report.json', 'utf8');
-            const vulnerabilities = report.split('\n').filter(line => line.trim()).map(JSON.parse);
-            const critical = vulnerabilities.filter(v => v.vulnerability?.severity === 'critical').length;
-            const high = vulnerabilities.filter(v => v.vulnerability?.severity === 'high').length;
-            const medium = vulnerabilities.filter(v => v.vulnerability?.severity === 'medium').length;
-            const low = vulnerabilities.filter(v => v.vulnerability?.severity === 'low').length;
-            
-            let body = `## Security Audit Results\n\n`;
-            body += `| Severity | Count |\n|----------|-------|\n`;
-            body += `| Critical | ${critical} |\n`;
-            body += `| High | ${high} |\n`;
-            body += `| Medium | ${medium} |\n`;
-            body += `| Low | ${low} |\n\n`;
-            
-            if (critical > 0 || high > 0) {
-              body += `⚠️ **Security vulnerabilities found!** Please review and update affected dependencies.`;
-            } else {
-              body += `✅ No critical or high severity vulnerabilities found.`;
-            }
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body
-            });
+      # Removed: a `Comment on PR with security results` step gated on
+      # `github.event_name == 'pull_request'`. This workflow has no
+      # `pull_request` trigger (only `schedule` and `workflow_dispatch`), so the
+      # condition was never true — the same dead-condition class as the release
+      # workflow's skip conditions. Its body was broken independently: it did
+      # `report.split('\n').map(JSON.parse)` on the output of `cargo audit --json`,
+      # which is a single JSON object, not JSON-lines, so every line but the first
+      # would have thrown. Deleted rather than repaired, because the step could not
+      # run; if a `pull_request` trigger is added later, write it against
+      # `JSON.parse(report)` and the actual schema.

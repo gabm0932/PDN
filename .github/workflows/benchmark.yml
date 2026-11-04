@@ -53,32 +53,72 @@ jobs:
       - name: Install criterion
         run: cargo install cargo-criterion
 
-      - name: Verify benchmark targets exist
+      - name: Verify benchmark targets exist and compile
         run: |
-          # A green benchmark check must mean benchmarks actually ran: fail if the
-          # workspace declares no [[bench]] target (otherwise cargo bench is a no-op).
+          set -euo pipefail
+          # A green benchmark check must mean benchmarks actually ran. Two things have
+          # to hold, and the guard that was here only checked the first:
+          #   1. the workspace declares [[bench]] targets, and
+          #   2. those targets COMPILE.
+          # Condition 2 was silently false: the bench sources had drifted from the
+          # crate APIs (`cargo bench` failed with 26 errors — E0432/E0422/E0560/E0599)
+          # while this workflow reported success, because the `| tee` below masked the
+          # exit status. Checking only for the `[[bench]]` marker gave a green tick
+          # over a target that could not build.
           if ! grep -rq --include=Cargo.toml "^\[\[bench\]\]" crates/ Cargo.toml; then
             echo "::error::No [[bench]] targets found in the workspace; cargo bench would measure nothing."
             exit 1
           fi
-          echo "Benchmark targets found:"
           grep -rn --include=Cargo.toml "^\[\[bench\]\]" crates/ Cargo.toml
+          # Build them, so "the targets exist" also means "the targets build".
+          cargo bench --workspace --locked --no-run
 
       - name: Run benchmarks
         run: |
-          cargo bench --workspace --locked --no-run 2>&1 | tail -20
-          cargo bench --workspace --locked 2>&1 | tee benchmark-output.txt
+          # Two things are load-bearing here.
+          #
+          # 1. `set -o pipefail`: GitHub Actions' default `bash -e` reports only the
+          #    LAST command's status, so `cargo bench ... | tee file` returned tee's
+          #    0 and a failed run was invisible to the job.
+          #
+          # 2. The suite is BOUNDED on purpose. Unbounded `cargo bench` uses
+          #    criterion's defaults (100 samples, 3s warm-up, 5s measurement) for
+          #    every case, and some cases here are not cheap -- `sandbox_creation/
+          #    create_sandbox` builds a real sandbox. Measured on this repo, the
+          #    unbounded suite is not predictable: 25.7 min on one revision, over
+          #    43 min and still climbing on the next, and a PR's baseline step was
+          #    killed with SIGTERM (exit 143) 51s into that single case.
+          #
+          #    A CI benchmark job is a smoke signal and a regression tripwire, not a
+          #    measurement laboratory. Bound each case here; take full-suite numbers
+          #    from a deliberate run.
+          #
+          # `--bench benchmarks` is REQUIRED for the criterion flags to land on the
+          # right harness: `cargo bench -- <args>` also feeds them to the libtest
+          # harness of lib/lib test, which rejects them with
+          # `error: Unrecognized option: 'warm-up-time'`.
+          set -euo pipefail
+          cargo bench --workspace --bench benchmarks --locked -- \
+            --warm-up-time 1 --measurement-time 3 --sample-size 10 2>&1 \
+            | tee benchmark-output.txt
 
       - name: Compare with baseline
         if: github.event_name == 'pull_request' && github.event.pull_request.base.repo.full_name == github.repository
         run: |
+          set -euo pipefail
           # Derive the baseline from the PR's base branch at runtime, so this does not
           # hardcode a default branch name that may not exist (repo default: master).
           BASEREF="${{ github.base_ref }}"
           git fetch origin "$BASEREF:$BASEREF"
           git stash
           git checkout "$BASEREF"
-          cargo bench --workspace --locked 2>&1 | tee benchmark-baseline.txt
+          # Same bounding as the step above, and for the same reason: this runs the
+          # suite a second time, against the base branch. Left unbounded it is the
+          # step that actually died -- exit 143 (SIGTERM) 51s into
+          # `sandbox_creation/create_sandbox`.
+          cargo bench --workspace --bench benchmarks --locked -- \
+            --warm-up-time 1 --measurement-time 3 --sample-size 10 2>&1 \
+            | tee benchmark-baseline.txt
           git checkout -
           git stash pop
 
