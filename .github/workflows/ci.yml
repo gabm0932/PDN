@@ -218,17 +218,29 @@ jobs:
           cargo install cargo-outdated --locked
           cargo outdated --workspace || true
 
-      - name: Check for unsafe code
+      # This step used to run `cargo geiger --workspace --output-format json` and
+      # pipe it through jq. cargo-geiger has NO json output: in 0.14
+      # `--output-format` accepts only Ascii, GitHubMarkdown and Utf8 (default), and
+      # asking for "json" panics with `Utf8ArgumentParsingFailed { value: "json",
+      # cause: "Matching variant not found" }`. The step never worked — first it was
+      # `command not found` (cargo-geiger was not installed) and later a panic, both
+      # swallowed by `|| true`.
+      #
+      # Reported, not gated: an unsafe-code count is a census, and the workspace
+      # legitimately uses `unsafe` for libc calls, so any threshold would be
+      # arbitrary. The report is uploaded so the number is visible and can be
+      # compared across runs.
+      - name: Count unsafe code (report)
         run: |
-          cargo geiger --workspace --output-format json > geiger-report.json
-          cat geiger-report.json | jq '.packages[] | select(.unsafe > 0) | {name: .name, unsafe: .unsafe}'
+          cargo geiger --workspace --output-format Ascii > geiger-report.txt
+          cat geiger-report.txt
 
       - name: Upload security reports
         uses: actions/upload-artifact@v6
         with:
           name: security-reports
           path: |
-            geiger-report.json
+            geiger-report.txt
           retention-days: 30
 
   # Job 5: Documentation Build
