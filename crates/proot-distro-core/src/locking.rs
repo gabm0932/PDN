@@ -76,24 +76,23 @@ impl FileLock {
     }
 
     pub fn lock(&mut self) -> Result<()> {
-        let _file = std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .open(&self.path)?;
 
-        // Use flock for locking
-        unsafe {
-            let result = libc::flock(
-                self.file.as_ref().map(|f| f.as_raw_fd()).unwrap_or(0),
-                libc::LOCK_EX | libc::LOCK_NB,
-            );
-
-            if result != 0 {
-                return Err(anyhow::anyhow!("Failed to acquire lock"));
-            }
+        // flock the descriptor we actually opened. The previous version flock'd
+        // `self.file` — always `None` here — falling through to `unwrap_or(0)`,
+        // i.e. file descriptor 0 (stdin), and then panicked unwrapping that same
+        // `None`. Neither excluded anything.
+        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if ret != 0 {
+            return Err(anyhow::anyhow!("Failed to acquire lock"));
         }
 
-        self.file = Some(self.file.take().unwrap());
+        // Keep the descriptor alive for as long as the lock is held: flock is
+        // released when the last descriptor referring to the file is closed.
+        self.file = Some(file);
         Ok(())
     }
 
@@ -184,5 +183,81 @@ impl ContainerLock {
 impl Drop for ContainerLock {
     fn drop(&mut self) {
         let _ = self.release();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_container_lock_exclusive_contention() {
+        let mut lock1 = ContainerLock::new("test_contention_box", true);
+        assert!(lock1.acquire().is_ok());
+
+        // Second exclusive lock attempt on same container must fail with non-blocking contention
+        let mut lock2 = ContainerLock::new("test_contention_box", true);
+        let res2 = lock2.acquire();
+        assert!(res2.is_err());
+        assert!(res2.unwrap_err().to_string().contains("held by another process"));
+
+        // Release first lock
+        drop(lock1);
+
+        // Now lock2 should succeed
+        assert!(lock2.acquire().is_ok());
+    }
+
+    #[test]
+    fn test_container_lock_shared_vs_exclusive() {
+        let mut shared1 = ContainerLock::new("test_sh_ex_box", false);
+        assert!(shared1.acquire().is_ok());
+
+        // Second shared lock should succeed
+        let mut shared2 = ContainerLock::new("test_sh_ex_box", false);
+        assert!(shared2.acquire().is_ok());
+
+        // Exclusive lock must fail while shared locks are held
+        let mut exclusive = ContainerLock::new("test_sh_ex_box", true);
+        assert!(exclusive.acquire().is_err());
+
+        drop(shared1);
+        drop(shared2);
+
+        // Exclusive lock now succeeds
+        assert!(exclusive.acquire().is_ok());
+    }
+
+    #[test]
+    fn test_file_lock_acquires_and_excludes_a_second_locker() {
+        // Resolve the temp base explicitly: Android has no writable `/tmp`, and
+        // `std::env::temp_dir()` falls back to it when TMPDIR is unset.
+        let base = std::env::var_os("TMPDIR")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("PREFIX").map(|p| std::path::PathBuf::from(p).join("tmp"))
+            })
+            .unwrap_or_else(std::env::temp_dir);
+        std::fs::create_dir_all(&base).expect("temp base");
+        let path = base.join(format!("pdn-filelock-{}.lock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        // First locker takes the lock and keeps the descriptor alive.
+        let mut first = FileLock::new(&path);
+        first.lock().expect("first lock must succeed");
+
+        // A second locker on the same path must be refused while the first holds it.
+        let mut second = FileLock::new(&path);
+        assert!(
+            second.lock().is_err(),
+            "a second locker must be refused while the first holds the lock"
+        );
+
+        // Releasing the first makes the path lockable again.
+        first.unlock().expect("unlock");
+        second.lock().expect("lock after release must succeed");
+        second.unlock().expect("unlock");
+
+        let _ = std::fs::remove_file(&path);
     }
 }
